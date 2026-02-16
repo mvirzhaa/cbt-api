@@ -1,0 +1,104 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model exams {
+  id                Int                 @id @default(autoincrement())
+  kode_mk           String              @db.VarChar(50)
+  kode_dosen        String              @db.VarChar(50)
+  nama_ujian        String              @db.VarChar(255)
+  token_ujian       String              @unique(map: "token_ujian") @db.VarChar(20)
+  waktu_mulai       DateTime            @db.DateTime(0)
+  waktu_selesai     DateTime            @db.DateTime(0)
+  created_at        DateTime            @default(now()) @db.Timestamp(0)
+  mata_kuliah       mata_kuliah         @relation(fields: [kode_mk], references: [kode_mk], onDelete: Cascade, onUpdate: Restrict, map: "exams_ibfk_1")
+  questions         questions[]
+  student_responses student_responses[]
+  durasi Int? @default(90)
+
+  @@index([kode_mk], map: "kode_mk")
+}
+
+model mata_kuliah {
+  kode_mk String  @id @db.VarChar(50)
+  nama_mk String  @db.VarChar(255)
+  exams   exams[]
+}
+
+model question_options {
+  id            Int       @id @default(autoincrement())
+  question_id   Int
+  label_pilihan String    @db.VarChar(5)
+  teks_pilihan  String    @db.Text
+  questions     questions @relation(fields: [question_id], references: [id], onDelete: Cascade, onUpdate: Restrict, map: "question_options_ibfk_1")
+
+  @@index([question_id], map: "question_id")
+}
+
+model questions {
+  id                Int                 @id @default(autoincrement())
+  exam_id           Int
+  cpmk              String              @db.VarChar(100)
+  tipe_soal         questions_tipe_soal
+  isi_soal          String              @db.Text
+  kunci_jawaban     String?             @db.Text
+  bobot_nilai       Decimal?            @default(0.00) @db.Decimal(5, 2)
+  question_options  question_options[]
+  exams             exams               @relation(fields: [exam_id], references: [id], onDelete: Cascade, onUpdate: Restrict, map: "questions_ibfk_1")
+  student_responses student_responses[]
+
+  @@index([exam_id], map: "exam_id")
+}
+
+model student_responses {
+  id               Int                                 @id @default(autoincrement())
+  user_id          Int
+  exam_id          Int
+  question_id      Int
+  jawaban_teks     String?                             @db.Text
+  file_path        String?                             @db.VarChar(255)
+  skor             Decimal?                            @default(0.00) @db.Decimal(5, 2)
+  status_penilaian student_responses_status_penilaian? @default(menunggu)
+  users            users                               @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: Restrict, map: "student_responses_ibfk_1")
+  exams            exams                               @relation(fields: [exam_id], references: [id], onDelete: Cascade, onUpdate: Restrict, map: "student_responses_ibfk_2")
+  questions        questions                           @relation(fields: [question_id], references: [id], onDelete: Cascade, onUpdate: Restrict, map: "student_responses_ibfk_3")
+
+  @@index([exam_id], map: "exam_id")
+  @@index([question_id], map: "question_id")
+  @@index([user_id], map: "user_id")
+}
+
+model users {
+  id                Int                 @id @default(autoincrement())
+  nama              String              @db.VarChar(100)
+  email             String              @unique(map: "email") @db.VarChar(100)
+  password          String              @db.VarChar(255)
+  role              users_role?         @default(mahasiswa)
+  status_aktif      Boolean?            @default(false)
+  created_at        DateTime            @default(now()) @db.Timestamp(0)
+  student_responses student_responses[]
+}
+
+enum questions_tipe_soal {
+  TIPE_1 @map("1") // Pilihan Ganda
+  TIPE_2 @map("2") // Teks Pendek
+  TIPE_3 @map("3") // Esai
+  TIPE_4 @map("4") // Upload Jawaban Kalkulus
+}
+
+enum users_role {
+  super_admin
+  admin
+  dosen
+  mahasiswa
+}
+
+enum student_responses_status_penilaian {
+  menunggu
+  selesai
+}
