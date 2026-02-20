@@ -18,7 +18,8 @@
     "dotenv": "^17.3.1",
     "express": "^5.2.1",
     "jsonwebtoken": "^9.0.3",
-    "multer": "^2.0.2"
+    "multer": "^2.0.2",
+    "string-similarity": "^4.0.4"
   },
   "devDependencies": {
     "prisma": "^6.19.2"
