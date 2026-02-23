@@ -6,11 +6,24 @@ const stringSimilarity = require('string-similarity'); // 🧠 OTAK AI
 // Import Controllers & Middlewares
 const authController = require('./controllers/authController'); 
 const upload = require('./middlewares/uploadMiddleware');
-const { verifyToken, isAdmin, isDosen } = require('./middlewares/authMiddleware');
+const { verifyToken, isAdmin, isDosen, isDosenOrSuperAdmin } = require('./middlewares/authMiddleware');
 
 const app = express();
 const prisma = new PrismaClient();
 const PORT = process.env.PORT || 3000;
+const ALLOWED_QUESTION_TYPES = new Set(['TIPE_1', 'TIPE_2', 'TIPE_3', 'TIPE_4']);
+
+const toPositiveInt = (value) => {
+    const parsed = Number.parseInt(value, 10);
+    return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+};
+
+const isNonEmptyString = (value) => typeof value === 'string' && value.trim().length > 0;
+
+const toValidDate = (value) => {
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+};
 
 // =========================================================================
 // ⚙️ SETUP MIDDLEWARE GLOBAL
@@ -113,7 +126,7 @@ app.delete('/api/matakuliah/:kode_mk', verifyToken, isAdmin, async (req, res) =>
 // =========================================================================
 
 // 1. Tarik Daftar Ujian Dosen
-app.get('/api/exams', verifyToken, async (req, res) => {
+app.get('/api/exams', verifyToken, isDosenOrSuperAdmin, async (req, res) => {
     try {
         const exams = await prisma.exams.findMany({
             where: req.user.role === 'super_admin' ? {} : { kode_dosen: req.user.id.toString() },
@@ -124,19 +137,28 @@ app.get('/api/exams', verifyToken, async (req, res) => {
 });
 
 // 2. Terbitkan Ujian Baru
-app.post('/api/exams', verifyToken, async (req, res) => {
+app.post('/api/exams', verifyToken, isDosen, async (req, res) => {
     try {
         const { kode_mk, nama_ujian, waktu_mulai, waktu_selesai, durasi } = req.body;
-        const rawUserId = req.userId || (req.user && req.user.id);
+        const rawUserId = req.user && req.user.id;
+        const durasiInt = toPositiveInt(durasi);
+        const waktuMulaiDate = toValidDate(waktu_mulai);
+        const waktuSelesaiDate = toValidDate(waktu_selesai);
         
         if (!rawUserId) return res.status(401).json({ message: "Identitas tidak ditemukan." });
+        if (!isNonEmptyString(kode_mk) || !isNonEmptyString(nama_ujian) || !waktuMulaiDate || !waktuSelesaiDate || !durasiInt) {
+            return res.status(400).json({ message: "Input ujian tidak valid." });
+        }
+        if (waktuMulaiDate >= waktuSelesaiDate) {
+            return res.status(400).json({ message: "waktu_mulai harus lebih kecil dari waktu_selesai." });
+        }
 
         const token_ujian = Math.random().toString(36).substring(2, 8).toUpperCase();
         
         const newExam = await prisma.exams.create({
             data: {
                 kode_mk, kode_dosen: rawUserId.toString(), nama_ujian, token_ujian,
-                waktu_mulai: new Date(waktu_mulai), waktu_selesai: new Date(waktu_selesai), durasi: parseInt(durasi)
+                waktu_mulai: waktuMulaiDate, waktu_selesai: waktuSelesaiDate, durasi: durasiInt
             }
         });
         res.status(201).json({ message: "Ujian berhasil diterbitkan!", data: newExam });
@@ -144,24 +166,39 @@ app.post('/api/exams', verifyToken, async (req, res) => {
 });
 
 // EDIT Ujian
-app.put('/api/exams/:id', verifyToken, async (req, res) => {
+app.put('/api/exams/:id', verifyToken, isDosenOrSuperAdmin, async (req, res) => {
     try {
-        const { id } = req.params;
+        const id = toPositiveInt(req.params.id);
         const { kode_mk, nama_ujian, waktu_mulai, waktu_selesai, durasi } = req.body;
+        const durasiInt = toPositiveInt(durasi);
+        const waktuMulaiDate = toValidDate(waktu_mulai);
+        const waktuSelesaiDate = toValidDate(waktu_selesai);
+        if (!id) {
+            return res.status(400).json({ message: "ID ujian tidak valid." });
+        }
+        if (!isNonEmptyString(kode_mk) || !isNonEmptyString(nama_ujian) || !waktuMulaiDate || !waktuSelesaiDate || !durasiInt) {
+            return res.status(400).json({ message: "Input ujian tidak valid." });
+        }
+        if (waktuMulaiDate >= waktuSelesaiDate) {
+            return res.status(400).json({ message: "waktu_mulai harus lebih kecil dari waktu_selesai." });
+        }
         
         // Pastikan hanya pemilik ujian yang bisa edit (Keamanan Ekstra)
-        const examCheck = await prisma.exams.findUnique({ where: { id: parseInt(id) } });
+        const examCheck = await prisma.exams.findUnique({ where: { id } });
+        if (!examCheck) {
+            return res.status(404).json({ message: "Ujian tidak ditemukan." });
+        }
         if (req.user.role !== 'super_admin' && examCheck.kode_dosen !== req.user.id.toString()) {
             return res.status(403).json({ message: "Anda tidak berhak mengedit ujian ini." });
         }
 
         const updatedExam = await prisma.exams.update({
-            where: { id: parseInt(id) },
+            where: { id },
             data: {
                 kode_mk, nama_ujian, 
-                waktu_mulai: new Date(waktu_mulai), 
-                waktu_selesai: new Date(waktu_selesai), 
-                durasi: parseInt(durasi)
+                waktu_mulai: waktuMulaiDate, 
+                waktu_selesai: waktuSelesaiDate, 
+                durasi: durasiInt
             }
         });
         res.status(200).json({ message: "Ujian berhasil diperbarui!", data: updatedExam });
@@ -169,19 +206,25 @@ app.put('/api/exams/:id', verifyToken, async (req, res) => {
 });
 
 // HAPUS Ujian (Dengan Proteksi Data Relasional)
-app.delete('/api/exams/:id', verifyToken, async (req, res) => {
+app.delete('/api/exams/:id', verifyToken, isDosenOrSuperAdmin, async (req, res) => {
     try {
-        const { id } = req.params;
+        const id = toPositiveInt(req.params.id);
+        if (!id) {
+            return res.status(400).json({ message: "ID ujian tidak valid." });
+        }
         
         // Pastikan hanya pemilik ujian yang bisa hapus
-        const examCheck = await prisma.exams.findUnique({ where: { id: parseInt(id) } });
+        const examCheck = await prisma.exams.findUnique({ where: { id } });
+        if (!examCheck) {
+            return res.status(404).json({ message: "Ujian tidak ditemukan." });
+        }
         if (req.user.role !== 'super_admin' && examCheck.kode_dosen !== req.user.id.toString()) {
             return res.status(403).json({ message: "Anda tidak berhak menghapus ujian ini." });
         }
 
         // 🌟 BENTENG KEAMANAN: Cek apakah sudah ada jawaban mahasiswa?
         const countResponses = await prisma.student_responses.count({
-            where: { exam_id: parseInt(id) }
+            where: { exam_id: id }
         });
 
         if (countResponses > 0) {
@@ -190,7 +233,7 @@ app.delete('/api/exams/:id', verifyToken, async (req, res) => {
             });
         }
 
-        await prisma.exams.delete({ where: { id: parseInt(id) } });
+        await prisma.exams.delete({ where: { id } });
         res.status(200).json({ message: "Ujian berhasil dihapus permanen." });
     } catch (error) { 
         res.status(500).json({ message: "Gagal menghapus ujian. Pastikan tidak ada soal yang terkait." }); 
@@ -198,7 +241,7 @@ app.delete('/api/exams/:id', verifyToken, async (req, res) => {
 });
 
 // 3. Bank Soal (CRUD)
-app.get('/api/questions', verifyToken, async (req, res) => {
+app.get('/api/questions', verifyToken, isDosen, async (req, res) => {
     try {
         const myExams = await prisma.exams.findMany({ where: { kode_dosen: req.user.id.toString() }, select: { id: true } });
         const myExamIds = myExams.map(e => e.id);
@@ -215,16 +258,39 @@ app.get('/api/questions', verifyToken, async (req, res) => {
     } catch (error) { res.status(500).json({ message: "Gagal mengambil soal." }); }
 });
 
-app.post('/api/questions', verifyToken, async (req, res) => {
+app.post('/api/questions', verifyToken, isDosen, async (req, res) => {
     try {
         const { exam_id, tipe_soal, isi_soal, opsi_jawaban, kunci_jawaban } = req.body;
+        const examId = toPositiveInt(exam_id);
+        if (!examId || !ALLOWED_QUESTION_TYPES.has(tipe_soal) || !isNonEmptyString(isi_soal)) {
+            return res.status(400).json({ message: "Input soal tidak valid." });
+        }
+
+        let parsedOpsi = null;
+        if (tipe_soal === 'TIPE_1') {
+            if (!isNonEmptyString(kunci_jawaban)) {
+                return res.status(400).json({ message: "kunci_jawaban wajib untuk TIPE_1." });
+            }
+            parsedOpsi = Array.isArray(opsi_jawaban) ? opsi_jawaban : JSON.parse(opsi_jawaban || '[]');
+            if (!Array.isArray(parsedOpsi) || parsedOpsi.length < 2) {
+                return res.status(400).json({ message: "opsi_jawaban TIPE_1 minimal 2 pilihan." });
+            }
+        }
+
+        const exam = await prisma.exams.findUnique({ where: { id: examId } });
+        if (!exam) {
+            return res.status(404).json({ message: "Ujian tidak ditemukan." });
+        }
+        if (exam.kode_dosen !== req.user.id.toString()) {
+            return res.status(403).json({ message: "Anda tidak berhak menambah soal di ujian ini." });
+        }
+
         const newQuestion = await prisma.questions.create({
-            data: { exam_id: parseInt(exam_id), cpmk: "CPMK-1", tipe_soal, isi_soal, kunci_jawaban, bobot_nilai: 10.00 }
+            data: { exam_id: examId, cpmk: "CPMK-1", tipe_soal, isi_soal, kunci_jawaban, bobot_nilai: 10.00 }
         });
 
-        if (tipe_soal === 'TIPE_1' && opsi_jawaban) {
-            const opsiArray = JSON.parse(opsi_jawaban); 
-            const opsiData = opsiArray.map((teks, index) => ({
+        if (tipe_soal === 'TIPE_1' && parsedOpsi) {
+            const opsiData = parsedOpsi.map((teks, index) => ({
                 question_id: newQuestion.id, label_pilihan: ['A', 'B', 'C', 'D'][index], teks_pilihan: teks
             }));
             await prisma.question_options.createMany({ data: opsiData });
@@ -233,12 +299,91 @@ app.post('/api/questions', verifyToken, async (req, res) => {
     } catch (error) { res.status(500).json({ message: "Gagal menyimpan soal." }); }
 });
 
-app.put('/api/questions/:id', verifyToken, async (req, res) => {
-    // ... Logika Put (Tetap dari kode aslimu)
+app.put('/api/questions/:id', verifyToken, isDosen, async (req, res) => {
+    try {
+        const questionId = toPositiveInt(req.params.id);
+        if (!questionId) {
+            return res.status(400).json({ message: "ID soal tidak valid." });
+        }
+
+        const { tipe_soal, isi_soal, opsi_jawaban, kunci_jawaban, bobot_nilai, cpmk } = req.body;
+        if (tipe_soal && !ALLOWED_QUESTION_TYPES.has(tipe_soal)) {
+            return res.status(400).json({ message: "tipe_soal tidak valid." });
+        }
+        if (isi_soal !== undefined && !isNonEmptyString(isi_soal)) {
+            return res.status(400).json({ message: "isi_soal tidak valid." });
+        }
+        if (cpmk !== undefined && !isNonEmptyString(cpmk)) {
+            return res.status(400).json({ message: "cpmk tidak valid." });
+        }
+
+        const question = await prisma.questions.findUnique({ where: { id: questionId }, include: { exams: true } });
+        if (!question) {
+            return res.status(404).json({ message: "Soal tidak ditemukan." });
+        }
+        if (question.exams.kode_dosen !== req.user.id.toString()) {
+            return res.status(403).json({ message: "Anda tidak berhak mengubah soal ini." });
+        }
+
+        let parsedBobot = question.bobot_nilai;
+        if (bobot_nilai !== undefined) {
+            parsedBobot = Number.parseFloat(bobot_nilai);
+            if (!Number.isFinite(parsedBobot) || parsedBobot < 0) {
+                return res.status(400).json({ message: "bobot_nilai harus angka >= 0." });
+            }
+        }
+
+        await prisma.questions.update({
+            where: { id: questionId },
+            data: {
+                tipe_soal: tipe_soal || question.tipe_soal,
+                isi_soal: isi_soal || question.isi_soal,
+                kunci_jawaban: kunci_jawaban === undefined ? question.kunci_jawaban : kunci_jawaban,
+                bobot_nilai: bobot_nilai === undefined ? question.bobot_nilai : parsedBobot,
+                cpmk: cpmk || question.cpmk
+            }
+        });
+
+        if (tipe_soal === 'TIPE_1' && opsi_jawaban) {
+            const opsiArray = Array.isArray(opsi_jawaban) ? opsi_jawaban : JSON.parse(opsi_jawaban);
+            if (!Array.isArray(opsiArray) || opsiArray.length < 2) {
+                return res.status(400).json({ message: "opsi_jawaban TIPE_1 minimal 2 pilihan." });
+            }
+            await prisma.question_options.deleteMany({ where: { question_id: questionId } });
+            await prisma.question_options.createMany({
+                data: opsiArray.map((teks, index) => ({
+                    question_id: questionId,
+                    label_pilihan: ['A', 'B', 'C', 'D'][index] || String(index + 1),
+                    teks_pilihan: teks
+                }))
+            });
+        }
+
+        if (tipe_soal && tipe_soal !== 'TIPE_1') {
+            await prisma.question_options.deleteMany({ where: { question_id: questionId } });
+        }
+
+        return res.status(200).json({ message: "Soal berhasil diperbarui." });
+    } catch (error) {
+        return res.status(500).json({ message: "Gagal memperbarui soal." });
+    }
 });
 
-app.delete('/api/questions/:id', verifyToken, async (req, res) => {
-    try { await prisma.questions.delete({ where: { id: parseInt(req.params.id) } }); res.json({ message: "Dihapus!" }); } 
+app.delete('/api/questions/:id', verifyToken, isDosen, async (req, res) => {
+    try {
+        const questionId = toPositiveInt(req.params.id);
+        if (!questionId) {
+            return res.status(400).json({ message: "ID soal tidak valid." });
+        }
+        const question = await prisma.questions.findUnique({ where: { id: questionId }, include: { exams: true } });
+        if (!question) return res.status(404).json({ message: "Soal tidak ditemukan." });
+        if (question.exams.kode_dosen !== req.user.id.toString()) {
+            return res.status(403).json({ message: "Anda tidak berhak menghapus soal ini." });
+        }
+
+        await prisma.questions.delete({ where: { id: questionId } });
+        res.json({ message: "Dihapus!" });
+    } 
     catch (error) { res.status(500).json({ message: "Error" }); }
 });
 
@@ -251,6 +396,9 @@ app.delete('/api/questions/:id', verifyToken, async (req, res) => {
 app.post('/api/student/verify-token', verifyToken, async (req, res) => {
     try {
         const { token } = req.body;
+        if (!isNonEmptyString(token)) {
+            return res.status(400).json({ message: "Token ujian tidak valid." });
+        }
 
         const exam = await prisma.exams.findUnique({
             where: { token_ujian: token.toUpperCase() }, 
@@ -275,18 +423,22 @@ app.post('/api/student/verify-token', verifyToken, async (req, res) => {
     } catch (error) { res.status(500).json({ message: "Gagal memverifikasi token." }); }
 });
 
-// 2. SUBMIT UJIAN & PENILAIAN AI (Rute disesuaikan dengan Frontend: /api/student/submit-exam)
+// 2. SUBMIT UJIAN & PENILAIAN AI (DENGAN SUPER DETECTOR PILGAN)
 app.post('/api/student/submit-exam', verifyToken, upload.any(), async (req, res) => {
     try {
         const { exam_id } = req.body;
-        // Mendukung format JSON Object langsung maupun Stringified FormData
         let answers = req.body.answers;
         if (typeof answers === 'string') answers = JSON.parse(answers);
         answers = answers || {};
 
         const user_id = req.user ? req.user.id : (req.userId || 1); 
 
-        const questions = await prisma.questions.findMany({ where: { exam_id: parseInt(exam_id) } });
+        // 🌟 WAJIB: include question_options agar AI tahu teks asli pilihan ganda
+        const questions = await prisma.questions.findMany({ 
+            where: { exam_id: parseInt(exam_id) },
+            include: { question_options: true }
+        });
+        
         if (questions.length === 0) return res.status(404).json({ message: "Soal tidak ditemukan." });
 
         const rekamJawaban = [];
@@ -301,9 +453,30 @@ app.post('/api/student/submit-exam', verifyToken, upload.any(), async (req, res)
             let statusNilai = 'menunggu';
             const bobot = soal.bobot_nilai ? parseFloat(soal.bobot_nilai) : 10.0;
 
+            // 🤖 MESIN PENILAIAN SUPER DETECTOR
             if (soal.tipe_soal === 'TIPE_1') { 
-                if (jawabanMhs === soal.kunci_jawaban) skorDidapat = bobot; 
+                const jawabanMhsAman = String(jawabanMhs).trim().toUpperCase(); 
+                const kunciAsli = String(soal.kunci_jawaban).trim().toUpperCase(); 
+                
+                const opsiDipilih = soal.question_options?.find(opt => String(opt.label_pilihan).toUpperCase() === jawabanMhsAman);
+
+                let isCorrect = false;
+
+                // Cek 3 Skenario Penyimpanan Data Dosen: Huruf, Angka Index, atau Teks Asli
+                if (kunciAsli === jawabanMhsAman) {
+                    isCorrect = true;
+                } else if ((kunciAsli === "0" && jawabanMhsAman === "A") ||
+                           (kunciAsli === "1" && jawabanMhsAman === "B") ||
+                           (kunciAsli === "2" && jawabanMhsAman === "C") ||
+                           (kunciAsli === "3" && jawabanMhsAman === "D")) {
+                    isCorrect = true;
+                } else if (opsiDipilih && kunciAsli === String(opsiDipilih.teks_pilihan).trim().toUpperCase()) {
+                    isCorrect = true;
+                }
+
+                if (isCorrect) skorDidapat = bobot; 
                 statusNilai = 'selesai';
+
             } else if (soal.tipe_soal === 'TIPE_3') { 
                 if (jawabanMhs && soal.kunci_jawaban) {
                     const similarity = stringSimilarity.compareTwoStrings(jawabanMhs.toLowerCase(), soal.kunci_jawaban.toLowerCase());
@@ -323,7 +496,10 @@ app.post('/api/student/submit-exam', verifyToken, upload.any(), async (req, res)
 
         await prisma.student_responses.createMany({ data: rekamJawaban });
         res.status(200).json({ message: "Ujian direkam!", info_nilai: `Skor Otomatis: ${totalSkorDiperoleh}` });
-    } catch (error) { res.status(500).json({ message: "Gagal menyimpan ujian ke database." }); }
+    } catch (error) { 
+        console.error("❌ ERROR SUBMIT:", error);
+        res.status(500).json({ message: "Gagal menyimpan ujian ke database." }); 
+    }
 });
 
 // 3. RIWAYAT UJIAN MAHASISWA
@@ -349,7 +525,7 @@ app.get('/api/student/history', verifyToken, async (req, res) => {
 // =========================================================================
 // 🏆 FITUR: GRADEBOOK & KOREKSI MANUAL (DOSEN)
 // =========================================================================
-app.get('/api/matakuliah/:id/scores', verifyToken, async (req, res) => {
+app.get('/api/matakuliah/:id/scores', verifyToken, isDosen, async (req, res) => {
     try {
         const exams = await prisma.exams.findMany({
             where: { kode_mk: req.params.id, kode_dosen: req.user.id.toString() }, select: { id: true }
@@ -377,25 +553,45 @@ app.get('/api/matakuliah/:id/scores', verifyToken, async (req, res) => {
     } catch (error) { res.status(500).json({ message: "Gagal tarik rekap" }); }
 });
 
-app.get('/api/grading/exams/:exam_id/answers', verifyToken, async (req, res) => {
+app.get('/api/grading/exams/:exam_id/answers', verifyToken, isDosen, async (req, res) => {
     try {
-        const { exam_id } = req.params;
-        const examCheck = await prisma.exams.findUnique({ where: { id: parseInt(exam_id) } });
+        const examId = toPositiveInt(req.params.exam_id);
+        if (!examId) {
+            return res.status(400).json({ message: "ID ujian tidak valid." });
+        }
+        const examCheck = await prisma.exams.findUnique({ where: { id: examId } });
         if (!examCheck || examCheck.kode_dosen !== req.user.id.toString()) return res.status(403).json({ message: "Akses Ditolak!" });
 
         const answers = await prisma.student_responses.findMany({
-            where: { exam_id: parseInt(exam_id), status_penilaian: 'menunggu' },
+            where: { exam_id: examId, status_penilaian: 'menunggu' },
             include: { users: { select: { nama: true } }, questions: { select: { isi_soal: true, tipe_soal: true } } }
         });
         res.status(200).json({ data: answers });
     } catch (error) { res.status(500).json({ message: "Gagal mengambil data jawaban." }); }
 });
 
-app.put('/api/grading/responses/:response_id/score', verifyToken, async (req, res) => {
+app.put('/api/grading/responses/:response_id/score', verifyToken, isDosen, async (req, res) => {
     try {
+        const responseId = toPositiveInt(req.params.response_id);
+        const scoreValue = Number.parseFloat(req.body.skor);
+        if (!responseId || !Number.isFinite(scoreValue) || scoreValue < 0) {
+            return res.status(400).json({ message: "Input penilaian tidak valid." });
+        }
+        const response = await prisma.student_responses.findUnique({
+            where: { id: responseId },
+            include: { exams: true }
+        });
+
+        if (!response) {
+            return res.status(404).json({ message: "Jawaban tidak ditemukan." });
+        }
+        if (response.exams.kode_dosen !== req.user.id.toString()) {
+            return res.status(403).json({ message: "Anda tidak berhak menilai jawaban ini." });
+        }
+
         await prisma.student_responses.update({
-            where: { id: parseInt(req.params.response_id) },
-            data: { skor: parseFloat(req.body.skor), status_penilaian: 'selesai' }
+            where: { id: responseId },
+            data: { skor: scoreValue, status_penilaian: 'selesai' }
         });
         res.status(200).json({ message: "Nilai berhasil disimpan!" });
     } catch (error) { res.status(500).json({ message: "Gagal menyimpan nilai." }); }
@@ -404,13 +600,23 @@ app.put('/api/grading/responses/:response_id/score', verifyToken, async (req, re
 // =========================================================================
 // 📊 ROUTE BARU: REKAP NILAI RINCI PER SESI UJIAN
 // =========================================================================
-app.get('/api/exams/:exam_id/rekap-detail', verifyToken, async (req, res) => {
+app.get('/api/exams/:exam_id/rekap-detail', verifyToken, isDosen, async (req, res) => {
     try {
-        const { exam_id } = req.params;
+        const examId = toPositiveInt(req.params.exam_id);
+        if (!examId) {
+            return res.status(400).json({ message: "ID ujian tidak valid." });
+        }
+        const exam = await prisma.exams.findUnique({ where: { id: examId } });
+        if (!exam) {
+            return res.status(404).json({ message: "Ujian tidak ditemukan." });
+        }
+        if (exam.kode_dosen !== req.user.id.toString()) {
+            return res.status(403).json({ message: "Akses Ditolak!" });
+        }
 
         // 1. Tarik semua jawaban mahasiswa khusus untuk SATU sesi ujian ini
         const responses = await prisma.student_responses.findMany({
-            where: { exam_id: parseInt(exam_id) },
+            where: { exam_id: examId },
             include: {
                 users: { select: { nama: true } },
                 questions: { select: { tipe_soal: true } } // Butuh tahu ini Pilgan/Esai/Upload
@@ -463,25 +669,6 @@ app.get('/api/exams/:exam_id/rekap-detail', verifyToken, async (req, res) => {
     }
 });
 
-
-// =========================================================================
-// 🚨 JALUR BELAKANG DARURAT
-// =========================================================================
-app.get('/api/bikin-admin-darurat', async (req, res) => {
-    try {
-        const bcrypt = require('bcrypt');
-        const hashedPassword = await bcrypt.hash('admin123', 10); 
-        const existingAdmin = await prisma.users.findUnique({ where: { email: 'admin@uika.ac.id' } });
-        
-        if (existingAdmin) {
-            await prisma.users.update({ where: { email: 'admin@uika.ac.id' }, data: { password: hashedPassword, role: 'super_admin' }});
-            return res.send('Akun admin di-reset! Password: admin123');
-        } else {
-            await prisma.users.create({ data: { nama: 'Super Admin', email: 'admin@uika.ac.id', password: hashedPassword, role: 'super_admin' }});
-            return res.send('Akun admin DIBUAT! Password: admin123');
-        }
-    } catch (error) { res.send('Gagal: ' + error.message); }
-});
 
 // =========================================================================
 // 🚀 START SERVER

@@ -1,33 +1,38 @@
 const multer = require('multer');
 const path = require('path');
 
-// Konfigurasi tempat penyimpanan file
+// Pengaturan lokasi penyimpanan dan nama file
 const storage = multer.diskStorage({
     destination: function (req, file, cb) {
-        cb(null, 'uploads/'); // Simpan ke folder uploads
+        cb(null, 'uploads/'); // Pastikan folder 'uploads' sudah ada di root backend
     },
     filename: function (req, file, cb) {
-        // Format nama: id_user-waktu-namaasli.pdf/jpg
         const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-        cb(null, uniqueSuffix + path.extname(file.originalname));
+        cb(null, file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname));
     }
 });
 
-// Filter hanya boleh upload gambar dan PDF (Best Practice Keamanan)
+// Penjaga Gerbang (Filter Format File)
 const fileFilter = (req, file, cb) => {
-    const allowedTypes = ['.jpeg', '.jpg', '.png', '.pdf'];
-    const ext = path.extname(file.originalname).toLowerCase();
-    if (allowedTypes.includes(ext)) {
-        cb(null, true);
+    // 🌟 PERBAIKAN: Tambahkan dukungan untuk zip, doc, dan docx
+    const allowedTypes = /jpeg|jpg|png|pdf|zip|x-zip-compressed/;
+    
+    // Cek ekstensi file
+    const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
+    // Cek mime type
+    const mimetype = allowedTypes.test(file.mimetype);
+
+    if (mimetype && extname) {
+        return cb(null, true); // Lolos!
     } else {
-        cb(new Error('Hanya diperbolehkan format JPG, PNG, dan PDF!'), false);
+        cb(new Error('Format file ditolak! Hanya diperbolehkan JPG, PNG, PDF, atau ZIP.'), false); // Ditolak!
     }
 };
 
 const upload = multer({ 
     storage: storage,
-    limits: { fileSize: 5 * 1024 * 1024 }, // Batas maksimal 5MB per file
-    fileFilter: fileFilter
+    fileFilter: fileFilter,
+    limits: { fileSize: 5 * 1024 * 1024 } // Batas maksimal 5MB sesuai instruksi Frontend
 });
 
 module.exports = upload;

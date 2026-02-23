@@ -3,7 +3,11 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 
 const prisma = new PrismaClient();
-const JWT_SECRET = process.env.JWT_SECRET || 'rahasia_negara_123'; // Di production, taruh ini di .env
+const JWT_SECRET = process.env.JWT_SECRET;
+
+if (!JWT_SECRET) {
+    throw new Error('JWT_SECRET is required');
+}
 
 // 1. REGISTER (Akun baru mendaftar)
 exports.register = async (req, res) => {

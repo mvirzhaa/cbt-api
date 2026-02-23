@@ -1,43 +1,95 @@
-# 🚀 RESTful API - Sistem CBT (Computer Based Test) Terintegrasi
+# RESTful API CBT
 
-Sistem _Backend_ berbasis Node.js untuk mengelola ujian _online_ (CBT) berskala menengah-besar. Dirancang dengan arsitektur _Multi-Tenant_, _Role-Based Access Control_ (RBAC) yang ketat, dan fitur _Auto-Grading_ cerdas.
+Backend API berbasis Node.js untuk sistem Computer Based Test (CBT) multi-peran.
 
-## ✨ Fitur Utama (Key Features)
+## Fitur Utama
 
-- **🔐 Sistem Keamanan Ganda (RBAC):** Akses terisolasi antara `Super Admin`, `Admin`, `Dosen`, dan `Mahasiswa` menggunakan **JWT (JSON Web Token)**. Akun pendaftar tidak langsung aktif hingga divalidasi oleh Admin.
-- **🏢 Multi-Tenant Architecture:** Mendukung banyak mata kuliah dan banyak dosen dalam satu ekosistem sistem terpusat.
-- **📝 Manajemen 4 Tipe Soal Kompleks:** \* Tipe 1: Pilihan Ganda (Otomatis dinilai)
-  - Tipe 2: Teks Pendek (Otomatis dinilai via _exact match_)
-  - Tipe 3: Esai Panjang (Otomatis dinilai via _Keyword Matching_ percentage)
-  - Tipe 4: Upload File Jawaban Manual (Disimpan di server lokal via Multer)
-- **🎫 Auto-Generate Token Ujian:** Sistem keamanan gerbang ujian otomatis di mana Mahasiswa wajib memasukkan 6 digit token acak yang di-_generate_ saat Dosen membuat jadwal ujian.
-- **🎯 Indikator CPMK:** Setiap soal dapat dikaitkan dengan Capaian Pembelajaran Mata Kuliah (CPMK) untuk pelacakan kualitas pendidikan.
+- Otentikasi JWT dengan aktivasi akun oleh admin.
+- RBAC untuk `super_admin`, `admin`, `dosen`, `mahasiswa`.
+- Manajemen mata kuliah, ujian, bank soal, dan penilaian.
+- 4 tipe soal:
+  - `TIPE_1`: Pilihan ganda (auto-grade).
+  - `TIPE_2`: Teks pendek (penilaian manual/flow dosen).
+  - `TIPE_3`: Esai (auto-grade berbasis similarity).
+  - `TIPE_4`: Upload file (penilaian manual).
+- Upload jawaban file via Multer.
+- Rekap nilai per mata kuliah dan per sesi ujian.
 
-## 🛠️ Teknologi yang Digunakan (Tech Stack)
+## Tech Stack
 
-- **Runtime Environment:** Node.js
-- **Web Framework:** Express.js
-- **Database:** MySQL
-- **ORM:** Prisma
-- **Keamanan:** Bcrypt.js (Password Hashing) & JSON Web Token (JWT)
-- **File Management:** Multer
+- Node.js + Express
+- MySQL + Prisma ORM
+- JWT (`jsonwebtoken`)
+- Password hashing (`bcryptjs`)
+- Upload file (`multer`)
 
----
+## Keamanan
 
-## 💻 Panduan Instalasi (Local Setup)
+- Endpoint admin dilindungi `verifyToken + isAdmin`.
+- Endpoint dosen dilindungi `verifyToken + isDosen` / `isDosenOrSuperAdmin`.
+- Ownership check diterapkan pada resource sensitif (ujian, soal, grading).
+- Jalur darurat pembuatan admin sudah dihapus.
+- `JWT_SECRET` wajib ada di environment (tidak ada fallback hardcoded).
 
-Ikuti langkah-langkah berikut untuk menjalankan sistem API ini di komputer lokal:
+## Prasyarat
 
-### 1. Prasyarat Sistem
+- Node.js 16+ (disarankan 18+)
+- MySQL aktif
 
-- Node.js (v16 atau lebih baru) terinstal.
-- XAMPP / Laragon (Apache & MySQL) berjalan.
-- Postman / Thunder Client untuk _testing_ API.
-
-### 2. Kloning dan Instalasi Dependensi
-
-Buka terminal dan jalankan:
+## Setup Lokal
 
 ```bash
 npm install
 ```
+
+Buat file `.env` minimal:
+
+```env
+DATABASE_URL="mysql://USER:PASSWORD@HOST:3306/DB_NAME"
+JWT_SECRET="ganti_dengan_secret_kuat"
+PORT=3000
+```
+
+Migrasi Prisma (sesuaikan dengan workflow kamu):
+
+```bash
+npx prisma generate
+npx prisma migrate dev
+```
+
+Jalankan server:
+
+```bash
+node index.js
+```
+
+## Catatan Endpoint
+
+- `POST /api/register`
+- `POST /api/login`
+- Admin:
+  - `PUT /api/admin/users/:id/approve`
+  - `GET /api/admin/users/pending`
+  - `GET /api/admin/users/active`
+  - `DELETE /api/admin/users/:id`
+- Dosen:
+  - `GET /api/exams`
+  - `POST /api/exams`
+  - `PUT /api/exams/:id`
+  - `DELETE /api/exams/:id`
+  - `GET /api/questions`
+  - `POST /api/questions`
+  - `PUT /api/questions/:id`
+  - `DELETE /api/questions/:id`
+  - `GET /api/grading/exams/:exam_id/answers`
+  - `PUT /api/grading/responses/:response_id/score`
+  - `GET /api/exams/:exam_id/rekap-detail`
+- Mahasiswa:
+  - `POST /api/student/verify-token`
+  - `POST /api/student/submit-exam`
+  - `GET /api/student/history`
+
+## Known Notes
+
+- `TIPE_2` belum di-auto-grade di endpoint submit saat ini.
+- Testing otomatis belum tersedia di `package.json`.
