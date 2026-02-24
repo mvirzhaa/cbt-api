@@ -20,6 +20,9 @@ model exams {
   questions         questions[]
   student_responses student_responses[]
   durasi Int? @default(90)
+  bobot_pilgan    Int      @default(100)
+  bobot_esai      Int      @default(0)
+  bobot_upload    Int      @default(0)
 
   @@index([kode_mk], map: "kode_mk")
 }

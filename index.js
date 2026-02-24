@@ -136,10 +136,11 @@ app.get('/api/exams', verifyToken, isDosenOrSuperAdmin, async (req, res) => {
     } catch (error) { res.status(500).json({ message: "Gagal mengambil data ujian." }); }
 });
 
-// 2. Terbitkan Ujian Baru
+// Terbitkan Ujian Baru
 app.post('/api/exams', verifyToken, isDosen, async (req, res) => {
     try {
-        const { kode_mk, nama_ujian, waktu_mulai, waktu_selesai, durasi } = req.body;
+        // 🌟 Tambahkan bobot_pilgan, bobot_esai, bobot_upload di tangkapan body
+        const { kode_mk, nama_ujian, waktu_mulai, waktu_selesai, durasi, bobot_pilgan, bobot_esai, bobot_upload } = req.body;
         const rawUserId = req.user && req.user.id;
         const durasiInt = toPositiveInt(durasi);
         const waktuMulaiDate = toValidDate(waktu_mulai);
@@ -149,94 +150,71 @@ app.post('/api/exams', verifyToken, isDosen, async (req, res) => {
         if (!isNonEmptyString(kode_mk) || !isNonEmptyString(nama_ujian) || !waktuMulaiDate || !waktuSelesaiDate || !durasiInt) {
             return res.status(400).json({ message: "Input ujian tidak valid." });
         }
-        if (waktuMulaiDate >= waktuSelesaiDate) {
-            return res.status(400).json({ message: "waktu_mulai harus lebih kecil dari waktu_selesai." });
-        }
+        if (waktuMulaiDate >= waktuSelesaiDate) return res.status(400).json({ message: "waktu_mulai harus lebih kecil dari waktu_selesai." });
 
         const token_ujian = Math.random().toString(36).substring(2, 8).toUpperCase();
         
         const newExam = await prisma.exams.create({
             data: {
                 kode_mk, kode_dosen: rawUserId.toString(), nama_ujian, token_ujian,
-                waktu_mulai: waktuMulaiDate, waktu_selesai: waktuSelesaiDate, durasi: durasiInt
+                waktu_mulai: waktuMulaiDate, waktu_selesai: waktuSelesaiDate, durasi: durasiInt,
+                bobot_pilgan: parseInt(bobot_pilgan) || 0, // 🌟 SIMPAN BOBOT
+                bobot_esai: parseInt(bobot_esai) || 0,     // 🌟 SIMPAN BOBOT
+                bobot_upload: parseInt(bobot_upload) || 0  // 🌟 SIMPAN BOBOT
             }
         });
         res.status(201).json({ message: "Ujian berhasil diterbitkan!", data: newExam });
     } catch (error) { res.status(500).json({ message: "Gagal menerbitkan ujian." }); }
 });
 
-// EDIT Ujian
+// EDIT Ujian (Super Safe Mode & Custom Formula)
 app.put('/api/exams/:id', verifyToken, isDosenOrSuperAdmin, async (req, res) => {
     try {
-        const id = toPositiveInt(req.params.id);
-        const { kode_mk, nama_ujian, waktu_mulai, waktu_selesai, durasi } = req.body;
-        const durasiInt = toPositiveInt(durasi);
-        const waktuMulaiDate = toValidDate(waktu_mulai);
-        const waktuSelesaiDate = toValidDate(waktu_selesai);
-        if (!id) {
-            return res.status(400).json({ message: "ID ujian tidak valid." });
+        const id = parseInt(req.params.id);
+        if (!id) return res.status(400).json({ message: "ID ujian tidak valid." });
+
+        const { kode_mk, nama_ujian, waktu_mulai, waktu_selesai, durasi, bobot_pilgan, bobot_esai, bobot_upload } = req.body;
+
+        // 🌟 Pastikan format tanggal aman untuk Prisma
+        const waktuMulaiDate = new Date(waktu_mulai);
+        const waktuSelesaiDate = new Date(waktu_selesai);
+
+        if (isNaN(waktuMulaiDate.getTime()) || isNaN(waktuSelesaiDate.getTime())) {
+            return res.status(400).json({ message: "Format waktu pelaksanaan tidak valid." });
         }
-        if (!isNonEmptyString(kode_mk) || !isNonEmptyString(nama_ujian) || !waktuMulaiDate || !waktuSelesaiDate || !durasiInt) {
-            return res.status(400).json({ message: "Input ujian tidak valid." });
-        }
+
         if (waktuMulaiDate >= waktuSelesaiDate) {
-            return res.status(400).json({ message: "waktu_mulai harus lebih kecil dari waktu_selesai." });
+            return res.status(400).json({ message: "Waktu mulai harus lebih awal dari waktu selesai." });
         }
-        
-        // Pastikan hanya pemilik ujian yang bisa edit (Keamanan Ekstra)
+
+        // 🌟 Pengecekan Hak Akses (Milik Sendiri)
         const examCheck = await prisma.exams.findUnique({ where: { id } });
-        if (!examCheck) {
-            return res.status(404).json({ message: "Ujian tidak ditemukan." });
-        }
+        if (!examCheck) return res.status(404).json({ message: "Ujian tidak ditemukan." });
         if (req.user.role !== 'super_admin' && examCheck.kode_dosen !== req.user.id.toString()) {
             return res.status(403).json({ message: "Anda tidak berhak mengedit ujian ini." });
         }
 
+        // 🌟 Eksekusi Update ke Database
         const updatedExam = await prisma.exams.update({
             where: { id },
             data: {
-                kode_mk, nama_ujian, 
-                waktu_mulai: waktuMulaiDate, 
-                waktu_selesai: waktuSelesaiDate, 
-                durasi: durasiInt
+                kode_mk: kode_mk,
+                nama_ujian: nama_ujian,
+                waktu_mulai: waktuMulaiDate,
+                waktu_selesai: waktuSelesaiDate,
+                durasi: parseInt(durasi) || 90,
+                // Pastikan bobot yang dikirim Frontend tersimpan dengan benar
+                bobot_pilgan: parseInt(bobot_pilgan) || 0,
+                bobot_esai: parseInt(bobot_esai) || 0,
+                bobot_upload: parseInt(bobot_upload) || 0
             }
         });
+
         res.status(200).json({ message: "Ujian berhasil diperbarui!", data: updatedExam });
-    } catch (error) { res.status(500).json({ message: "Gagal memperbarui ujian." }); }
-});
-
-// HAPUS Ujian (Dengan Proteksi Data Relasional)
-app.delete('/api/exams/:id', verifyToken, isDosenOrSuperAdmin, async (req, res) => {
-    try {
-        const id = toPositiveInt(req.params.id);
-        if (!id) {
-            return res.status(400).json({ message: "ID ujian tidak valid." });
-        }
-        
-        // Pastikan hanya pemilik ujian yang bisa hapus
-        const examCheck = await prisma.exams.findUnique({ where: { id } });
-        if (!examCheck) {
-            return res.status(404).json({ message: "Ujian tidak ditemukan." });
-        }
-        if (req.user.role !== 'super_admin' && examCheck.kode_dosen !== req.user.id.toString()) {
-            return res.status(403).json({ message: "Anda tidak berhak menghapus ujian ini." });
-        }
-
-        // 🌟 BENTENG KEAMANAN: Cek apakah sudah ada jawaban mahasiswa?
-        const countResponses = await prisma.student_responses.count({
-            where: { exam_id: id }
-        });
-
-        if (countResponses > 0) {
-            return res.status(400).json({ 
-                message: "DITOLAK! Ujian ini tidak bisa dihapus karena sudah dikerjakan oleh mahasiswa. Biarkan waktu ujiannya habis agar pindah ke Arsip secara otomatis." 
-            });
-        }
-
-        await prisma.exams.delete({ where: { id } });
-        res.status(200).json({ message: "Ujian berhasil dihapus permanen." });
-    } catch (error) { 
-        res.status(500).json({ message: "Gagal menghapus ujian. Pastikan tidak ada soal yang terkait." }); 
+    } catch (error) {
+        // Jika masih error, pesan ini akan muncul di terminal Backend Anda!
+        console.error("❌ ERROR PUT EXAM:", error); 
+        res.status(500).json({ message: "Gagal memperbarui ujian di database." });
     }
 });
 
@@ -600,43 +578,43 @@ app.put('/api/grading/responses/:response_id/score', verifyToken, isDosen, async
 // =========================================================================
 // 📊 ROUTE BARU: REKAP NILAI RINCI PER SESI UJIAN
 // =========================================================================
+// 📊 REKAP NILAI RINCI DENGAN CUSTOM FORMULA DOSEN
 app.get('/api/exams/:exam_id/rekap-detail', verifyToken, isDosen, async (req, res) => {
     try {
         const examId = toPositiveInt(req.params.exam_id);
-        if (!examId) {
-            return res.status(400).json({ message: "ID ujian tidak valid." });
-        }
-        const exam = await prisma.exams.findUnique({ where: { id: examId } });
-        if (!exam) {
-            return res.status(404).json({ message: "Ujian tidak ditemukan." });
-        }
-        if (exam.kode_dosen !== req.user.id.toString()) {
-            return res.status(403).json({ message: "Akses Ditolak!" });
-        }
+        if (!examId) return res.status(400).json({ message: "ID ujian tidak valid." });
+        
+        const exam = await prisma.exams.findUnique({ 
+            where: { id: examId },
+            include: { questions: true } // Ambil soal untuk hitung nilai maksimal
+        });
+        
+        if (!exam) return res.status(404).json({ message: "Ujian tidak ditemukan." });
+        if (exam.kode_dosen !== req.user.id.toString()) return res.status(403).json({ message: "Akses Ditolak!" });
 
-        // 1. Tarik semua jawaban mahasiswa khusus untuk SATU sesi ujian ini
-        const responses = await prisma.student_responses.findMany({
-            where: { exam_id: examId },
-            include: {
-                users: { select: { nama: true } },
-                questions: { select: { tipe_soal: true } } // Butuh tahu ini Pilgan/Esai/Upload
-            }
+        // 🧠 1. Hitung Nilai Maksimal Mentah per Kategori
+        let maxPilgan = 0, maxEsai = 0, maxUpload = 0;
+        exam.questions.forEach(q => {
+            const bobotSoal = parseFloat(q.bobot_nilai || 10);
+            if (q.tipe_soal === 'TIPE_1') maxPilgan += bobotSoal;
+            else if (q.tipe_soal === 'TIPE_2' || q.tipe_soal === 'TIPE_3') maxEsai += bobotSoal;
+            else if (q.tipe_soal === 'TIPE_4') maxUpload += bobotSoal;
         });
 
-        // 2. Mesin Pengelompokan Nilai
+        // 2. Tarik semua jawaban mahasiswa
+        const responses = await prisma.student_responses.findMany({
+            where: { exam_id: examId },
+            include: { users: { select: { nama: true } }, questions: { select: { tipe_soal: true } } }
+        });
+
         const studentScores = {};
 
         responses.forEach(r => {
             const uid = r.user_id;
-            
-            // Jika mahasiswa ini belum ada di daftar, buatkan cetak birunya
             if (!studentScores[uid]) {
                 studentScores[uid] = {
                     nama_mahasiswa: r.users?.nama || 'Anonim',
-                    skor_pilgan: 0,
-                    skor_esai: 0,
-                    skor_upload: 0,
-                    total_skor: 0,
+                    raw_pilgan: 0, raw_esai: 0, raw_upload: 0,
                     status: 'Selesai'
                 };
             }
@@ -644,25 +622,31 @@ app.get('/api/exams/:exam_id/rekap-detail', verifyToken, isDosen, async (req, re
             const tipe = r.questions?.tipe_soal;
             const skor = parseFloat(r.skor || 0);
 
-            // 3. Pisahkan nilai berdasarkan keranjangnya masing-masing
-            if (tipe === 'TIPE_1') {
-                studentScores[uid].skor_pilgan += skor;
-            } else if (tipe === 'TIPE_2' || tipe === 'TIPE_3') {
-                studentScores[uid].skor_esai += skor; // Esai Singkat & AI masuk sini
-            } else if (tipe === 'TIPE_4') {
-                studentScores[uid].skor_upload += skor;
-            }
+            if (tipe === 'TIPE_1') studentScores[uid].raw_pilgan += skor;
+            else if (tipe === 'TIPE_2' || tipe === 'TIPE_3') studentScores[uid].raw_esai += skor; 
+            else if (tipe === 'TIPE_4') studentScores[uid].raw_upload += skor;
 
-            // Tambahkan ke Total Akhir
-            studentScores[uid].total_skor += skor;
-
-            // Jika ada satu saja soal yang belum dinilai dosen, ubah statusnya
-            if (r.status_penilaian === 'menunggu') {
-                studentScores[uid].status = 'Menunggu Koreksi Dosen';
-            }
+            if (r.status_penilaian === 'menunggu') studentScores[uid].status = 'Menunggu Koreksi Dosen';
         });
 
-        res.status(200).json({ data: Object.values(studentScores) });
+        // 🧠 3. Terapkan Rumus Persentase Dosen
+        const finalResults = Object.values(studentScores).map(student => {
+            // Rumus: (Skor Mentah Mahasiswa / Skor Maksimal Kategori) * Persentase Dosen
+            const nilaiPilgan = maxPilgan > 0 ? (student.raw_pilgan / maxPilgan) * exam.bobot_pilgan : 0;
+            const nilaiEsai = maxEsai > 0 ? (student.raw_esai / maxEsai) * exam.bobot_esai : 0;
+            const nilaiUpload = maxUpload > 0 ? (student.raw_upload / maxUpload) * exam.bobot_upload : 0;
+
+            return {
+                nama_mahasiswa: student.nama_mahasiswa,
+                skor_pilgan: nilaiPilgan,   // Skor Pilgan setelah dikali bobot
+                skor_esai: nilaiEsai,       // Skor Esai setelah dikali bobot
+                skor_upload: nilaiUpload,   // Skor Upload setelah dikali bobot
+                total_skor: nilaiPilgan + nilaiEsai + nilaiUpload, // Pasti maksimal 100
+                status: student.status
+            };
+        });
+
+        res.status(200).json({ data: finalResults });
     } catch (error) {
         console.error("❌ ERROR GET REKAP DETAIL:", error);
         res.status(500).json({ message: "Gagal menarik rincian nilai." });
