@@ -33,6 +33,7 @@ model mata_kuliah {
   dosen_id  Int?    
   users     users?  @relation(fields: [dosen_id], references: [id], onDelete: SetNull, onUpdate: Cascade)
   exams   exams[]
+  materi_kuliah materi_kuliah[]
 }
 
 model question_options {
@@ -88,6 +89,7 @@ model users {
   created_at        DateTime            @default(now()) @db.Timestamp(0)
   student_responses student_responses[]
   mata_kuliah       mata_kuliah[]
+  materi_kuliah     materi_kuliah[]
 }
 
 enum questions_tipe_soal {
@@ -107,4 +109,20 @@ enum users_role {
 enum student_responses_status_penilaian {
   menunggu
   selesai
+}
+
+model materi_kuliah {
+  id          Int         @id @default(autoincrement())
+  kode_mk     String      @db.VarChar(50)
+  dosen_id    Int
+  judul       String      @db.VarChar(255)
+  deskripsi   String?     @db.Text
+  file_path   String      @db.VarChar(255)
+  created_at  DateTime    @default(now()) @db.Timestamp(0)
+
+  mata_kuliah mata_kuliah @relation(fields: [kode_mk], references: [kode_mk], onDelete: Cascade, onUpdate: Restrict, map: "fk_materi_mk")
+  users       users       @relation(fields: [dosen_id], references: [id], onDelete: Cascade, onUpdate: Restrict, map: "fk_materi_dosen")
+
+  @@index([kode_mk], map: "idx_materi_mk")
+  @@index([dosen_id], map: "idx_materi_dosen")
 }

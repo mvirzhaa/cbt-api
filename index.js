@@ -13,6 +13,10 @@ const prisma = new PrismaClient();
 const PORT = process.env.PORT || 3000;
 const ALLOWED_QUESTION_TYPES = new Set(['TIPE_1', 'TIPE_2', 'TIPE_3', 'TIPE_4']);
 
+// Membuka akses statis agar file PDF/PPT bisa diakses langsung via URL browser
+const path = require('path');
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+
 const toPositiveInt = (value) => {
     const parsed = Number.parseInt(value, 10);
     return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
@@ -25,13 +29,16 @@ const toValidDate = (value) => {
     return Number.isNaN(parsed.getTime()) ? null : parsed;
 };
 
+const materiRoutes = require('./routes/materi');
+
 // =========================================================================
 // ⚙️ SETUP MIDDLEWARE GLOBAL
 // =========================================================================
 app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-app.use('/uploads', express.static('uploads'));
+// Endpoint khusus untuk fitur LMS (Materi)
+app.use('/api/materi', materiRoutes);
 
 app.get('/', (req, res) => {
     res.json({ message: "CBT API Ready! 🚀 AI Auto-Grader & Tenant Isolation Activated." });
