@@ -1,53 +1,144 @@
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
+const { toPositiveInt, isNonEmptyString } = require('../utils/helpers');
 
-// Tambah Soal ke dalam Ujian (Khusus Dosen)
-exports.addQuestion = async (req, res) => {
+const ALLOWED_QUESTION_TYPES = new Set(['TIPE_1', 'TIPE_2', 'TIPE_3', 'TIPE_4']);
+
+exports.getQuestions = async (req, res) => {
     try {
-        const { exam_id, cpmk, tipe_soal, isi_soal, kunci_jawaban, bobot_nilai, pilihan_ganda } = req.body;
+        const myExams = await prisma.exams.findMany({ where: { kode_dosen: req.user.id.toString() }, select: { id: true } });
+        const myExamIds = myExams.map(e => e.id);
 
-        // 1. Validasi Keamanan: Pastikan ujian ini benar-benar milik Dosen yang sedang login
-        const exam = await prisma.exams.findUnique({ where: { id: exam_id } });
-        
-        if (!exam) {
-            return res.status(404).json({ message: "Ujian tidak ditemukan!" });
+        const questions = await prisma.questions.findMany({ 
+            where: { exam_id: { in: myExamIds } }, include: { question_options: true } 
+        });
+
+        const formattedData = questions.map(q => ({
+            id: q.id, exam_id: q.exam_id, tipe_soal: q.tipe_soal, isi_soal: q.isi_soal, kunci_jawaban: q.kunci_jawaban,
+            opsi_jawaban: q.tipe_soal === 'TIPE_1' ? JSON.stringify(q.question_options.map(opt => opt.teks_pilihan)) : null
+        }));
+        res.status(200).json({ data: formattedData });
+    } catch (error) { res.status(500).json({ message: "Gagal mengambil soal." }); }
+};
+
+exports.createQuestion = async (req, res) => {
+    try {
+        const { exam_id, tipe_soal, isi_soal, opsi_jawaban, kunci_jawaban } = req.body;
+        const examId = toPositiveInt(exam_id);
+        if (!examId || !ALLOWED_QUESTION_TYPES.has(tipe_soal) || !isNonEmptyString(isi_soal)) {
+            return res.status(400).json({ message: "Input soal tidak valid." });
         }
-        
-        // req.user.id berasal dari Token JWT Dosen
+
+        let parsedOpsi = null;
+        if (tipe_soal === 'TIPE_1') {
+            if (!isNonEmptyString(kunci_jawaban)) {
+                return res.status(400).json({ message: "kunci_jawaban wajib untuk TIPE_1." });
+            }
+            parsedOpsi = Array.isArray(opsi_jawaban) ? opsi_jawaban : JSON.parse(opsi_jawaban || '[]');
+            if (!Array.isArray(parsedOpsi) || parsedOpsi.length < 2) {
+                return res.status(400).json({ message: "opsi_jawaban TIPE_1 minimal 2 pilihan." });
+            }
+        }
+
+        const exam = await prisma.exams.findUnique({ where: { id: examId } });
+        if (!exam) return res.status(404).json({ message: "Ujian tidak ditemukan." });
         if (exam.kode_dosen !== req.user.id.toString()) {
-            return res.status(403).json({ message: "Akses Ditolak! Anda bukan pembuat ujian ini." });
+            return res.status(403).json({ message: "Anda tidak berhak menambah soal di ujian ini." });
         }
 
-        // 2. Simpan Soal Utama ke Database
         const newQuestion = await prisma.questions.create({
+            data: { exam_id: examId, cpmk: "CPMK-1", tipe_soal, isi_soal, kunci_jawaban, bobot_nilai: 10.00 }
+        });
+
+        if (tipe_soal === 'TIPE_1' && parsedOpsi) {
+            const opsiData = parsedOpsi.map((teks, index) => ({
+                question_id: newQuestion.id, label_pilihan: ['A', 'B', 'C', 'D'][index], teks_pilihan: teks
+            }));
+            await prisma.question_options.createMany({ data: opsiData });
+        }
+        res.status(201).json({ message: "Soal sukses dibuat!" });
+    } catch (error) { res.status(500).json({ message: "Gagal menyimpan soal." }); }
+};
+
+exports.updateQuestion = async (req, res) => {
+    try {
+        const questionId = toPositiveInt(req.params.id);
+        if (!questionId) return res.status(400).json({ message: "ID soal tidak valid." });
+
+        const { tipe_soal, isi_soal, opsi_jawaban, kunci_jawaban, bobot_nilai, cpmk } = req.body;
+        if (tipe_soal && !ALLOWED_QUESTION_TYPES.has(tipe_soal)) {
+            return res.status(400).json({ message: "tipe_soal tidak valid." });
+        }
+        if (isi_soal !== undefined && !isNonEmptyString(isi_soal)) {
+            return res.status(400).json({ message: "isi_soal tidak valid." });
+        }
+        if (cpmk !== undefined && !isNonEmptyString(cpmk)) {
+            return res.status(400).json({ message: "cpmk tidak valid." });
+        }
+
+        const question = await prisma.questions.findUnique({ where: { id: questionId }, include: { exams: true } });
+        if (!question) return res.status(404).json({ message: "Soal tidak ditemukan." });
+        if (question.exams.kode_dosen !== req.user.id.toString()) {
+            return res.status(403).json({ message: "Anda tidak berhak mengubah soal ini." });
+        }
+
+        let parsedBobot = question.bobot_nilai;
+        if (bobot_nilai !== undefined) {
+            parsedBobot = Number.parseFloat(bobot_nilai);
+            if (!Number.isFinite(parsedBobot) || parsedBobot < 0) {
+                return res.status(400).json({ message: "bobot_nilai harus angka >= 0." });
+            }
+        }
+
+        await prisma.questions.update({
+            where: { id: questionId },
             data: {
-                exam_id,
-                cpmk, // Indikator CPMK sesuai request dosen
-                tipe_soal, // Nilainya harus: TIPE_1, TIPE_2, TIPE_3, atau TIPE_4
-                isi_soal,
-                kunci_jawaban, 
-                bobot_nilai
+                tipe_soal: tipe_soal || question.tipe_soal,
+                isi_soal: isi_soal || question.isi_soal,
+                kunci_jawaban: kunci_jawaban === undefined ? question.kunci_jawaban : kunci_jawaban,
+                bobot_nilai: bobot_nilai === undefined ? question.bobot_nilai : parsedBobot,
+                cpmk: cpmk || question.cpmk
             }
         });
 
-        // 3. Logic Khusus Tipe 1 (Pilihan Ganda)
-        // Jika soal adalah PG, otomatis masukkan opsi A, B, C, D ke tabel question_options
-        if (tipe_soal === 'TIPE_1' && pilihan_ganda && pilihan_ganda.length > 0) {
-            const optionsData = pilihan_ganda.map(opt => ({
-                question_id: newQuestion.id,
-                label_pilihan: opt.label,       // Contoh: "A"
-                teks_pilihan: opt.teks          // Contoh: "Ibukota Indonesia adalah Jakarta"
-            }));
-            
-            await prisma.question_options.createMany({ data: optionsData });
+        if (tipe_soal === 'TIPE_1' && opsi_jawaban) {
+            const opsiArray = Array.isArray(opsi_jawaban) ? opsi_jawaban : JSON.parse(opsi_jawaban);
+            if (!Array.isArray(opsiArray) || opsiArray.length < 2) {
+                return res.status(400).json({ message: "opsi_jawaban TIPE_1 minimal 2 pilihan." });
+            }
+            await prisma.question_options.deleteMany({ where: { question_id: questionId } });
+            await prisma.question_options.createMany({
+                data: opsiArray.map((teks, index) => ({
+                    question_id: questionId,
+                    label_pilihan: ['A', 'B', 'C', 'D'][index] || String(index + 1),
+                    teks_pilihan: teks
+                }))
+            });
         }
 
-        res.status(201).json({ 
-            message: "Soal berhasil ditambahkan ke bank soal ujian!", 
-            data: newQuestion 
-        });
+        if (tipe_soal && tipe_soal !== 'TIPE_1') {
+            await prisma.question_options.deleteMany({ where: { question_id: questionId } });
+        }
 
+        return res.status(200).json({ message: "Soal berhasil diperbarui." });
     } catch (error) {
-        res.status(500).json({ message: "Terjadi kesalahan server", error: error.message });
+        return res.status(500).json({ message: "Gagal memperbarui soal." });
     }
+};
+
+exports.deleteQuestion = async (req, res) => {
+    try {
+        const questionId = toPositiveInt(req.params.id);
+        if (!questionId) return res.status(400).json({ message: "ID soal tidak valid." });
+        
+        const question = await prisma.questions.findUnique({ where: { id: questionId }, include: { exams: true } });
+        if (!question) return res.status(404).json({ message: "Soal tidak ditemukan." });
+        if (question.exams.kode_dosen !== req.user.id.toString()) {
+            return res.status(403).json({ message: "Anda tidak berhak menghapus soal ini." });
+        }
+
+        await prisma.questions.delete({ where: { id: questionId } });
+        res.json({ message: "Dihapus!" });
+    } 
+    catch (error) { res.status(500).json({ message: "Error" }); }
 };

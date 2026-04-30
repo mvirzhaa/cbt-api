@@ -1,101 +1,126 @@
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
+const stringSimilarity = require('string-similarity');
+const { isNonEmptyString } = require('../utils/helpers');
 
-// 1. Masuk Ujian Pakai Token
-exports.enterExam = async (req, res) => {
+exports.verifyToken = async (req, res) => {
     try {
-        const { token_ujian } = req.body;
-
-        const exam = await prisma.exams.findUnique({ where: { token_ujian } });
-        if (!exam) return res.status(404).json({ message: "Token Ujian tidak valid!" });
-
-        // Cek Waktu Ujian
-        const now = new Date();
-        if (now < exam.waktu_mulai || now > exam.waktu_selesai) {
-            return res.status(403).json({ message: "Ujian sedang tidak aktif!" });
+        const { token } = req.body;
+        if (!isNonEmptyString(token)) {
+            return res.status(400).json({ message: "Token ujian tidak valid." });
         }
 
-        // Ambil soal-soal (PENTING: JANGAN SELECT KUNCI_JAWABAN agar tidak dicontek via API)
-        const questions = await prisma.questions.findMany({
-            where: { exam_id: exam.id },
-            select: {
-                id: true, cpmk: true, tipe_soal: true, isi_soal: true, bobot_nilai: true,
-                question_options: true // Ambil opsi A,B,C,D jika ada
-            }
+        const exam = await prisma.exams.findUnique({
+            where: { token_ujian: token.toUpperCase() }, 
+            include: { mata_kuliah: true, questions: { include: { question_options: true } } }
         });
 
-        res.json({ message: "Berhasil masuk ujian!", exam, questions });
-    } catch (error) {
-        res.status(500).json({ message: "Terjadi kesalahan server", error: error.message });
+        if (!exam) return res.status(404).json({ message: "Token Ujian tidak ditemukan di database." });
+
+        const now = new Date();
+        const waktuMulaiToleransi = new Date(new Date(exam.waktu_mulai).getTime() - (5 * 60000));
+        
+        if (now < waktuMulaiToleransi) {
+            const formatJam = new Date(exam.waktu_mulai).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
+            return res.status(403).json({ message: `Ujian belum dimulai. Sesi dibuka pukul ${formatJam} WIB.` });
+        }
+        if (now > new Date(exam.waktu_selesai)) {
+            return res.status(403).json({ message: "Akses ditolak. Sesi ujian ini telah resmi ditutup." });
+        }
+
+        res.status(200).json({ message: "Akses Diberikan!", data: { exam: exam, questions: exam.questions } });
+    } catch (error) { res.status(500).json({ message: "Gagal memverifikasi token." }); }
+};
+
+exports.submitExam = async (req, res) => {
+    try {
+        const { exam_id } = req.body;
+        let answers = req.body.answers;
+        if (typeof answers === 'string') answers = JSON.parse(answers);
+        answers = answers || {};
+
+        const user_id = req.user ? req.user.id : (req.userId || 1); 
+
+        const questions = await prisma.questions.findMany({ 
+            where: { exam_id: parseInt(exam_id) },
+            include: { question_options: true }
+        });
+        
+        if (questions.length === 0) return res.status(404).json({ message: "Soal tidak ditemukan." });
+
+        const rekamJawaban = [];
+        let totalSkorDiperoleh = 0;
+
+        for (const soal of questions) {
+            const jawabanMhs = answers[soal.id.toString()] || "";
+            const fileTerlampir = req.files ? req.files.find(f => f.fieldname === `file_${soal.id}`) : null;
+            const pathFile = fileTerlampir ? fileTerlampir.path.replace(/\\/g, "/") : null;
+            
+            let skorDidapat = 0;
+            let statusNilai = 'menunggu';
+            const bobot = soal.bobot_nilai ? parseFloat(soal.bobot_nilai) : 10.0;
+
+            if (soal.tipe_soal === 'TIPE_1') { 
+                const jawabanMhsAman = String(jawabanMhs).trim().toUpperCase(); 
+                const kunciAsli = String(soal.kunci_jawaban).trim().toUpperCase(); 
+                
+                const opsiDipilih = soal.question_options?.find(opt => String(opt.label_pilihan).toUpperCase() === jawabanMhsAman);
+
+                let isCorrect = false;
+
+                if (kunciAsli === jawabanMhsAman) {
+                    isCorrect = true;
+                } else if ((kunciAsli === "0" && jawabanMhsAman === "A") ||
+                           (kunciAsli === "1" && jawabanMhsAman === "B") ||
+                           (kunciAsli === "2" && jawabanMhsAman === "C") ||
+                           (kunciAsli === "3" && jawabanMhsAman === "D")) {
+                    isCorrect = true;
+                } else if (opsiDipilih && kunciAsli === String(opsiDipilih.teks_pilihan).trim().toUpperCase()) {
+                    isCorrect = true;
+                }
+
+                if (isCorrect) skorDidapat = bobot; 
+                statusNilai = 'selesai';
+
+            } else if (soal.tipe_soal === 'TIPE_3') { 
+                if (jawabanMhs && soal.kunci_jawaban) {
+                    const similarity = stringSimilarity.compareTwoStrings(jawabanMhs.toLowerCase(), soal.kunci_jawaban.toLowerCase());
+                    skorDidapat = Math.round(similarity * bobot * 100) / 100;
+                }
+                statusNilai = 'selesai'; 
+            } else if (soal.tipe_soal === 'TIPE_4') { 
+                skorDidapat = 0; statusNilai = 'menunggu'; 
+            }
+
+            rekamJawaban.push({
+                user_id: user_id, exam_id: parseInt(exam_id), question_id: soal.id,
+                jawaban_teks: jawabanMhs, file_path: pathFile, skor: skorDidapat, status_penilaian: statusNilai 
+            });
+            totalSkorDiperoleh += skorDidapat;
+        }
+
+        await prisma.student_responses.createMany({ data: rekamJawaban });
+        res.status(200).json({ message: "Ujian direkam!", info_nilai: `Skor Otomatis: ${totalSkorDiperoleh}` });
+    } catch (error) { 
+        console.error("❌ ERROR SUBMIT:", error);
+        res.status(500).json({ message: "Gagal menyimpan ujian ke database." }); 
     }
 };
 
-// 2. Submit Jawaban & Auto-Grading
-exports.submitAnswer = async (req, res) => {
+exports.getHistory = async (req, res) => {
     try {
-        // Ambil data dari text (req.body) atau file upload (req.file)
-        const { exam_id, question_id, jawaban_teks } = req.body;
-        const user_id = req.user.id; 
-        const file = req.file; 
-
-        // Ambil soal dan kunci jawabannya
-        const question = await prisma.questions.findUnique({ where: { id: parseInt(question_id) } });
-        if (!question) return res.status(404).json({ message: "Soal tidak ditemukan!" });
-
-        let skor = 0;
-        let status = 'selesai'; // Default selesai (dinilai otomatis)
-
-        // --- LOGIKA AUTO-GRADING ---
-        if (question.tipe_soal === 'TIPE_1' || question.tipe_soal === 'TIPE_2') {
-            // Cek presisi (Pilihan Ganda & Teks Pendek)
-            if (jawaban_teks && jawaban_teks.toLowerCase().trim() === question.kunci_jawaban.toLowerCase().trim()) {
-                skor = Number(question.bobot_nilai);
-            }
-        } 
-        else if (question.tipe_soal === 'TIPE_3') {
-            // Cek Keyword (Esai) - Misal kunci: "oop, encapsulation, inheritance"
-            const keywords = question.kunci_jawaban.toLowerCase().split(',');
-            let matchCount = 0;
-            
-            keywords.forEach(kw => {
-                if (jawaban_teks && jawaban_teks.toLowerCase().includes(kw.trim())) {
-                    matchCount++;
-                }
-            });
-            // Hitung persentase bobot
-            skor = (matchCount / keywords.length) * Number(question.bobot_nilai);
-        } 
-        else if (question.tipe_soal === 'TIPE_4') {
-            // Upload Kalkulus (Manual Dosen)
-            status = 'menunggu';
-            if (!file) return res.status(400).json({ message: "File jawaban wajib diunggah!" });
-        }
-
-        // Simpan Jawaban ke Database (Upsert: buat baru jika belum ada, update jika sudah ada)
-        // Kita pakai findFirst & update manual karena tabel kita belum punya composite unique key
-        const existingResponse = await prisma.student_responses.findFirst({
-            where: { user_id: parseInt(user_id), question_id: parseInt(question_id) }
+        const user_id = req.user ? req.user.id : req.userId;
+        const responses = await prisma.student_responses.findMany({
+            where: { user_id: user_id }, include: { exams: { include: { mata_kuliah: true } } }
         });
 
-        const dataResponse = {
-            user_id: parseInt(user_id),
-            exam_id: parseInt(exam_id),
-            question_id: parseInt(question_id),
-            jawaban_teks: jawaban_teks || null,
-            file_path: file ? file.path : null, // Path gambar/PDF
-            skor: skor,
-            status_penilaian: status
-        };
-
-        if (existingResponse) {
-            await prisma.student_responses.update({ where: { id: existingResponse.id }, data: dataResponse });
-        } else {
-            await prisma.student_responses.create({ data: dataResponse });
-        }
-
-        res.json({ message: "Jawaban berhasil disimpan!", skor_sementara: skor, status });
-
-    } catch (error) {
-        res.status(500).json({ message: "Terjadi kesalahan server", error: error.message });
-    }
+        const rekapNilai = {};
+        responses.forEach(resp => {
+            const exId = resp.exam_id;
+            if (!rekapNilai[exId]) rekapNilai[exId] = { exam_nama: resp.exams?.nama_ujian || 'Unknown', matkul: resp.exams?.mata_kuliah?.nama_mk || '-', total_skor: 0, status: 'Selesai Dinilai' };
+            rekapNilai[exId].total_skor += parseFloat(resp.skor || 0);
+            if (resp.status_penilaian === 'menunggu') rekapNilai[exId].status = 'Menunggu Koreksi Dosen';
+        });
+        res.status(200).json({ data: Object.values(rekapNilai) });
+    } catch (error) { res.status(500).json({ message: "Gagal menarik riwayat" }); }
 };
