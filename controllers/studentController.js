@@ -124,3 +124,33 @@ exports.getHistory = async (req, res) => {
         res.status(200).json({ data: Object.values(rekapNilai) });
     } catch (error) { res.status(500).json({ message: "Gagal menarik riwayat" }); }
 };
+
+exports.getExams = async (req, res) => {
+    try {
+        const exams = await prisma.exams.findMany({
+            where: { 
+                waktu_selesai: {
+                    gte: new Date()
+                }
+            },
+            select: {
+                id: true,
+                nama_ujian: true,
+                kode_mk: true,
+                durasi: true,
+                waktu_mulai: true,
+                waktu_selesai: true,
+                mata_kuliah: {
+                    select: {
+                        nama_mk: true
+                    }
+                }
+            },
+            orderBy: { created_at: 'desc' }
+        });
+        return res.json({ success: true, data: exams });
+    } catch (error) {
+        console.error('[Get Student Exams]', error);
+        return res.status(500).json({ success: false, message: 'Server error.' });
+    }
+};

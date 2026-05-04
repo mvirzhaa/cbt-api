@@ -7,6 +7,6 @@ router.post('/register', authController.register);
 router.post('/login', authController.login);
 
 // Rute Integrasi External Login
-router.post('/external-login', authController.externalLogin);
+router.post('/auth/external-login', authController.externalLogin);
 
 module.exports = router;
