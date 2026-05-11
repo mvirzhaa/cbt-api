@@ -25,6 +25,8 @@ model exams {
   bobot_upload      Int                 @default(0)
   examViolations    exam_violations[]
 
+  grading_type      exams_grading_type? @default(PER_SOAL)
+
   @@index([kode_mk], map: "kode_mk")
 }
 
@@ -143,4 +145,9 @@ model exam_violations {
 
   users users @relation(fields: [user_id], references: [id], onDelete: Cascade)
   exams exams @relation(fields: [exam_id], references: [id], onDelete: Cascade)
+}
+
+enum exams_grading_type {
+  PER_SOAL
+  PER_KATEGORI
 }

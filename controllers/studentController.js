@@ -1,6 +1,7 @@
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
-const stringSimilarity = require('string-similarity');
+// const stringSimilarity = require('string-similarity'); // ❌ Sudah tidak dipakai, diganti AI
+const aiService = require('../services/aiService'); // ✅ Import Otak AI Kapten
 const { isNonEmptyString } = require('../utils/helpers');
 
 exports.verifyToken = async (req, res) => {
@@ -35,11 +36,30 @@ exports.verifyToken = async (req, res) => {
 exports.submitExam = async (req, res) => {
     try {
         const { exam_id } = req.body;
-        let answers = req.body.answers;
-        if (typeof answers === 'string') answers = JSON.parse(answers);
-        answers = answers || {};
+        
+        // 🌟 LOGIKA BARU: Merakit ulang answers dari FormData (Multipart) maupun JSON
+        let answers = {};
+        
+        // Jika dikirim via JSON biasa (Fallback aman)
+        if (req.body.answers && typeof req.body.answers === 'object') {
+            answers = req.body.answers;
+        } else if (req.body.answers && typeof req.body.answers === 'string') {
+            try { answers = JSON.parse(req.body.answers); } catch(e) {}
+        } else {
+            // Jika dikirim via FormData (Format: answers[123] = "Jawaban")
+            Object.keys(req.body).forEach(key => {
+                if (key.startsWith('answers[')) {
+                    // Ekstrak ID soal dari string "answers[123]" -> "123"
+                    const match = key.match(/\[(.*?)\]/);
+                    if (match && match[1]) {
+                        const questionId = match[1];
+                        answers[questionId] = req.body[key];
+                    }
+                }
+            });
+        }
 
-        const user_id = req.user ? req.user.id : (req.userId || 1); 
+        const user_id = req.user?.userId || req.user?.id || req.userId || 1; 
 
         const questions = await prisma.questions.findMany({ 
             where: { exam_id: parseInt(exam_id) },
@@ -50,9 +70,12 @@ exports.submitExam = async (req, res) => {
 
         const rekamJawaban = [];
         let totalSkorDiperoleh = 0;
+        const antreanEsaiAI = []; // 🤖 Keranjang untuk menampung soal esai
 
         for (const soal of questions) {
             const jawabanMhs = answers[soal.id.toString()] || "";
+            
+            // 📁 Logika File Upload (Diambil dari multer req.files)
             const fileTerlampir = req.files ? req.files.find(f => f.fieldname === `file_${soal.id}`) : null;
             const pathFile = fileTerlampir ? fileTerlampir.path.replace(/\\/g, "/") : null;
             
@@ -61,11 +84,10 @@ exports.submitExam = async (req, res) => {
             const bobot = soal.bobot_nilai ? parseFloat(soal.bobot_nilai) : 10.0;
 
             if (soal.tipe_soal === 'TIPE_1') { 
+                // Logika Pilihan Ganda
                 const jawabanMhsAman = String(jawabanMhs).trim().toUpperCase(); 
                 const kunciAsli = String(soal.kunci_jawaban).trim().toUpperCase(); 
-                
                 const opsiDipilih = soal.question_options?.find(opt => String(opt.label_pilihan).toUpperCase() === jawabanMhsAman);
-
                 let isCorrect = false;
 
                 if (kunciAsli === jawabanMhsAman) {
@@ -83,13 +105,22 @@ exports.submitExam = async (req, res) => {
                 statusNilai = 'selesai';
 
             } else if (soal.tipe_soal === 'TIPE_3') { 
+                // 🤖 LOGIKA AI (ESAI)
+                skorDidapat = 0; 
+                statusNilai = 'menunggu'; 
+                
                 if (jawabanMhs && soal.kunci_jawaban) {
-                    const similarity = stringSimilarity.compareTwoStrings(jawabanMhs.toLowerCase(), soal.kunci_jawaban.toLowerCase());
-                    skorDidapat = Math.round(similarity * bobot * 100) / 100;
+                    antreanEsaiAI.push({
+                        question_id: soal.id,
+                        soalTeks: soal.isi_soal || "Soal Esai IT",
+                        kunciJawaban: soal.kunci_jawaban,
+                        jawabanMhs: jawabanMhs
+                    });
                 }
-                statusNilai = 'selesai'; 
             } else if (soal.tipe_soal === 'TIPE_4') { 
-                skorDidapat = 0; statusNilai = 'menunggu'; 
+                // 📁 LOGIKA UPLOAD
+                skorDidapat = 0; 
+                statusNilai = 'menunggu'; 
             }
 
             rekamJawaban.push({
@@ -99,7 +130,28 @@ exports.submitExam = async (req, res) => {
             totalSkorDiperoleh += skorDidapat;
         }
 
+        // 1. Simpan semua jawaban ke Database
         await prisma.student_responses.createMany({ data: rekamJawaban });
+
+        // 2. 🤖 EKSEKUSI AI QUEUE 🤖
+        if (antreanEsaiAI.length > 0) {
+            const savedResponses = await prisma.student_responses.findMany({
+                where: { user_id: user_id, exam_id: parseInt(exam_id) }
+            });
+
+            antreanEsaiAI.forEach(esai => {
+                const dbRecord = savedResponses.find(r => r.question_id === esai.question_id);
+                if (dbRecord) {
+                    aiService.addToQueue(
+                        dbRecord.id, 
+                        esai.soalTeks, 
+                        esai.kunciJawaban, 
+                        esai.jawabanMhs
+                    );
+                }
+            });
+        }
+
         res.status(200).json({ message: "Ujian direkam!", info_nilai: `Skor Otomatis: ${totalSkorDiperoleh}` });
     } catch (error) { 
         console.error("❌ ERROR SUBMIT:", error);
@@ -109,20 +161,62 @@ exports.submitExam = async (req, res) => {
 
 exports.getHistory = async (req, res) => {
     try {
-        const user_id = req.user ? req.user.id : req.userId;
+        const user_id = req.user?.userId || req.user?.id || req.userId || 1;
+        
+        // Tarik data jawaban beserta detail soal dan ujiannya
         const responses = await prisma.student_responses.findMany({
-            where: { user_id: user_id }, include: { exams: { include: { mata_kuliah: true } } }
+            where: { user_id: user_id }, 
+            include: { 
+                exams: { include: { mata_kuliah: true } },
+                questions: true // WAJIB di-include agar mesin tahu bobot per soal
+            }
         });
 
-        const rekapNilai = {};
+        // Kelompokkan jawaban berdasarkan ID Ujian
+        const groupedByExam = {};
         responses.forEach(resp => {
-            const exId = resp.exam_id;
-            if (!rekapNilai[exId]) rekapNilai[exId] = { exam_nama: resp.exams?.nama_ujian || 'Unknown', matkul: resp.exams?.mata_kuliah?.nama_mk || '-', total_skor: 0, status: 'Selesai Dinilai' };
-            rekapNilai[exId].total_skor += parseFloat(resp.skor || 0);
-            if (resp.status_penilaian === 'menunggu') rekapNilai[exId].status = 'Menunggu Koreksi Dosen';
+            if (!groupedByExam[resp.exam_id]) {
+                groupedByExam[resp.exam_id] = {
+                    examConfig: resp.exams,
+                    responses: [],
+                    questions: []
+                };
+            }
+            groupedByExam[resp.exam_id].responses.push(resp);
+            // Hindari duplikasi soal di array
+            if (!groupedByExam[resp.exam_id].questions.find(q => q.id === resp.questions.id)) {
+                groupedByExam[resp.exam_id].questions.push(resp.questions);
+            }
         });
-        res.status(200).json({ data: Object.values(rekapNilai) });
-    } catch (error) { res.status(500).json({ message: "Gagal menarik riwayat" }); }
+
+        // Proses dengan Mesin Penilai Utama (gradingService)
+        const historyData = [];
+        for (const examId in groupedByExam) {
+            const data = groupedByExam[examId];
+            
+            // 🌟 PANGGIL MESIN PENILAI
+            const gradingResult = gradingService.calculateFinalScore(
+                data.responses, 
+                data.questions, 
+                data.examConfig
+            );
+
+            historyData.push({
+                exam_id: examId,
+                exam_nama: data.examConfig.nama_ujian,
+                matkul: data.examConfig.mata_kuliah?.nama_mk || '-',
+                total_skor: gradingResult.totalScore, // Nilai mutlak/persentase yang sudah akurat
+                breakdown: gradingResult.breakdown,   // Rincian per kategori (Pilgan, Esai, Upload)
+                status: gradingResult.isAllGraded ? 'Selesai Dinilai' : 'Menunggu Koreksi Dosen/AI',
+                grading_type: data.examConfig.grading_type
+            });
+        }
+
+        res.status(200).json({ data: historyData });
+    } catch (error) { 
+        console.error("❌ ERROR GET HISTORY:", error);
+        res.status(500).json({ message: "Gagal menarik riwayat" }); 
+    }
 };
 
 exports.getExams = async (req, res) => {
