@@ -6,7 +6,7 @@ async function main() {
     // Kita hash password 'rahasia123' agar aman di database
     const hashedPassword = await bcrypt.hash('rahasia123', 10);
 
-    // Upsert: Bikin akun baru jika belum ada, abaikan jika sudah ada
+    // Upsert: Bikin akun super admin
     const superAdmin = await prisma.users.upsert({
         where: { email: 'superadmin@cbt.com' },
         update: {},
@@ -15,10 +15,39 @@ async function main() {
             email: 'superadmin@cbt.com',
             password: hashedPassword,
             role: 'super_admin',
-            status_aktif: true // Super admin langsung aktif tanpa perlu di-ACC
+            status_aktif: true
         },
     });
     console.log('✅ Super Admin berhasil disinkronisasi:', superAdmin.email);
+
+    // Upsert: Bikin akun Dosen
+    const dosen = await prisma.users.upsert({
+        where: { email: 'dosen@cbt.com' },
+        update: {},
+        create: {
+            nama: 'Dr. Dosen Penguji',
+            email: 'dosen@cbt.com',
+            password: hashedPassword,
+            role: 'dosen',
+            status_aktif: true
+        },
+    });
+    console.log('✅ Dosen berhasil disinkronisasi:', dosen.email);
+
+    // Upsert: Bikin akun Mahasiswa
+    const mahasiswa = await prisma.users.upsert({
+        where: { email: 'mahasiswa@cbt.com' },
+        update: {},
+        create: {
+            nama: 'Mahasiswa Teladan',
+            email: 'mahasiswa@cbt.com',
+            nim: '12345678',
+            password: hashedPassword,
+            role: 'mahasiswa',
+            status_aktif: true
+        },
+    });
+    console.log('✅ Mahasiswa berhasil disinkronisasi:', mahasiswa.email);
 }
 
 main()
