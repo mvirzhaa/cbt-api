@@ -69,14 +69,16 @@ const processQueue = async () => {
                         where: { user_id: job.userId, exam_id: job.examId },
                         include: { questions: { select: { tipe_soal: true, bobot_nilai: true } } }
                     });
-                    let maxEsai = 0, rawEsai = 0;
+                    let totalBobotEsai = 0, totalNilaiEsaiBerbobot = 0;
                     allResponses.forEach(r => {
                         if (r.questions.tipe_soal === 'TIPE_2' || r.questions.tipe_soal === 'TIPE_3') {
-                            maxEsai += parseFloat(r.questions.bobot_nilai || 10);
-                            rawEsai += parseFloat(r.skor || 0);
+                            const bobot = parseFloat(r.questions.bobot_nilai || 10);
+                            const skor = parseFloat(r.skor || 0);
+                            totalBobotEsai += bobot;
+                            totalNilaiEsaiBerbobot += (skor * bobot);
                         }
                     });
-                    const skor_esai_100 = maxEsai > 0 ? Math.round((rawEsai / maxEsai) * 100) : 0;
+                    const skor_esai_100 = totalBobotEsai > 0 ? Math.round(totalNilaiEsaiBerbobot / totalBobotEsai) : 0;
                     await prisma.exam_attempts.updateMany({
                         where: { user_id: job.userId, exam_id: job.examId },
                         data: { skor_esai_100 }

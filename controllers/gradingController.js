@@ -112,10 +112,46 @@ exports.submitScore = async (req, res) => {
             return res.status(403).json({ message: "Anda tidak berhak menilai jawaban ini." });
         }
 
-        await prisma.student_responses.update({
+        const updatedResponse = await prisma.student_responses.update({
             where: { id: responseId },
-            data: { skor: scoreValue, status_penilaian: 'selesai' }
+            data: { skor: scoreValue, status_penilaian: 'selesai' },
+            include: { questions: { select: { tipe_soal: true } } }
         });
+
+        // 🔄 Recalculate skor di exam_attempts setelah dosen mengupdate nilai
+        try {
+            const allResponses = await prisma.student_responses.findMany({
+                where: { user_id: response.user_id, exam_id: response.exam_id },
+                include: { questions: { select: { tipe_soal: true, bobot_nilai: true } } }
+            });
+            
+            let totalBobotEsai = 0, totalNilaiEsaiBerbobot = 0;
+            let totalBobotFile = 0, totalNilaiFileBerbobot = 0;
+
+            allResponses.forEach(r => {
+                const bobot = parseFloat(r.questions.bobot_nilai || 10);
+                const skor = parseFloat(r.skor || 0); // 0-100
+                
+                if (r.questions.tipe_soal === 'TIPE_2' || r.questions.tipe_soal === 'TIPE_3') {
+                    totalBobotEsai += bobot;
+                    totalNilaiEsaiBerbobot += (skor * bobot);
+                } else if (r.questions.tipe_soal === 'TIPE_4') {
+                    totalBobotFile += bobot;
+                    totalNilaiFileBerbobot += (skor * bobot);
+                }
+            });
+
+            const skor_esai_100 = totalBobotEsai > 0 ? Math.round(totalNilaiEsaiBerbobot / totalBobotEsai) : 0;
+            const skor_file_100 = totalBobotFile > 0 ? Math.round(totalNilaiFileBerbobot / totalBobotFile) : 0;
+
+            await prisma.exam_attempts.updateMany({
+                where: { user_id: response.user_id, exam_id: response.exam_id },
+                data: { skor_esai_100, skor_file_100 }
+            });
+        } catch (attemptErr) {
+            console.error('❌ Gagal update exam_attempts dari manual grading:', attemptErr.message);
+        }
+
         res.status(200).json({ message: "Nilai berhasil disimpan!" });
     } catch (error) { res.status(500).json({ message: "Gagal menyimpan nilai." }); }
 };
