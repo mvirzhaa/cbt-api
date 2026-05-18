@@ -53,14 +53,13 @@ const processQueue = async () => {
             const skorAI = await gradeWithAI(job.soal, job.kunciJawaban, job.jawabanMhs);
             
             if (skorAI !== null) {
-                // Simpan nilai ke database (Update status_penilaian per soal)
-                await prisma.student_responses.update({
-                    where: { id: job.responseId },
-                    data: {
-                        skor: skorAI,
-                        status_penilaian: 'selesai'
-                    }
-                });
+                    await prisma.student_responses.update({
+                        where: { id: job.responseId },
+                        data: {
+                            skor: skorAI
+                            // status_penilaian TETAP 'menunggu' agar dosen bisa memverifikasi nilai ini di halaman Grading
+                        }
+                    });
                 console.log(`[AI Worker] Selesai! ID: ${job.responseId} | Skor: ${skorAI}`);
 
                 // 🆕 Recalculate skor_esai_100 di exam_attempts (status TETAP MENUNGGU_VERIFIKASI)
