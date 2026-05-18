@@ -15,6 +15,7 @@ const studentRoutes = require('./routes/student');
 const gradingRoutes = require('./routes/grading');
 const materiRoutes = require('./routes/materi');
 const proctoringRoutes = require('./routes/proctoring');
+const dosenRoutes = require('./routes/dosen');
 
 // =========================================================================
 // ⚙️ SETUP MIDDLEWARE GLOBAL
@@ -40,6 +41,7 @@ app.use('/api/student', studentRoutes);
 app.use('/api/grading', gradingRoutes);
 app.use('/api/materi', materiRoutes);
 app.use('/api/proctoring', proctoringRoutes);
+app.use('/api/dosen', dosenRoutes);
 
 // =========================================================================
 // 🚀 START SERVER

@@ -19,6 +19,7 @@ model exams {
   mata_kuliah       mata_kuliah         @relation(fields: [kode_mk], references: [kode_mk], onDelete: Cascade, onUpdate: Restrict, map: "exams_ibfk_1")
   questions         questions[]
   student_responses student_responses[]
+  exam_attempts     exam_attempts[]
   durasi            Int?                @default(90)
   bobot_pilgan      Int                 @default(100)
   bobot_esai        Int                 @default(0)
@@ -95,6 +96,8 @@ model users {
   mata_kuliah       mata_kuliah[]
   materi_kuliah     materi_kuliah[]
   exam_violations   exam_violations[]
+  student_attempts     exam_attempts[]  @relation("student_attempts")
+  dosen_verifications  exam_attempts[]  @relation("dosen_verifications")
 }
 
 enum questions_tipe_soal {
@@ -150,4 +153,34 @@ model exam_violations {
 enum exams_grading_type {
   PER_SOAL
   PER_KATEGORI
+}
+
+// ==========================================
+// 📋 TABEL ATTEMPT UJIAN (HUMAN-IN-THE-LOOP)
+// ==========================================
+model exam_attempts {
+  id              Int                  @id @default(autoincrement())
+  user_id         Int
+  exam_id         Int
+  skor_pilgan_100 Decimal              @default(0.00) @db.Decimal(5, 2)
+  skor_esai_100   Decimal              @default(0.00) @db.Decimal(5, 2)
+  skor_file_100   Decimal              @default(0.00) @db.Decimal(5, 2)
+  final_score     Decimal?             @db.Decimal(5, 2)
+  status          exam_attempts_status @default(MENUNGGU_VERIFIKASI)
+  submitted_at    DateTime             @default(now()) @db.Timestamp(0)
+  verified_at     DateTime?            @db.Timestamp(0)
+  verified_by     Int?
+
+  users    users  @relation("student_attempts", fields: [user_id], references: [id], onDelete: Cascade)
+  exams    exams  @relation(fields: [exam_id], references: [id], onDelete: Cascade)
+  verifier users? @relation("dosen_verifications", fields: [verified_by], references: [id], onDelete: SetNull)
+
+  @@unique([user_id, exam_id])
+  @@index([exam_id])
+  @@index([user_id])
+}
+
+enum exam_attempts_status {
+  MENUNGGU_VERIFIKASI
+  SELESAI
 }

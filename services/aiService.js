@@ -53,7 +53,7 @@ const processQueue = async () => {
             const skorAI = await gradeWithAI(job.soal, job.kunciJawaban, job.jawabanMhs);
             
             if (skorAI !== null) {
-                // Simpan nilai ke database (Update status_penilaian)
+                // Simpan nilai ke database (Update status_penilaian per soal)
                 await prisma.student_responses.update({
                     where: { id: job.responseId },
                     data: {
@@ -62,6 +62,29 @@ const processQueue = async () => {
                     }
                 });
                 console.log(`[AI Worker] Selesai! ID: ${job.responseId} | Skor: ${skorAI}`);
+
+                // 🆕 Recalculate skor_esai_100 di exam_attempts (status TETAP MENUNGGU_VERIFIKASI)
+                try {
+                    const allResponses = await prisma.student_responses.findMany({
+                        where: { user_id: job.userId, exam_id: job.examId },
+                        include: { questions: { select: { tipe_soal: true, bobot_nilai: true } } }
+                    });
+                    let maxEsai = 0, rawEsai = 0;
+                    allResponses.forEach(r => {
+                        if (r.questions.tipe_soal === 'TIPE_2' || r.questions.tipe_soal === 'TIPE_3') {
+                            maxEsai += parseFloat(r.questions.bobot_nilai || 10);
+                            rawEsai += parseFloat(r.skor || 0);
+                        }
+                    });
+                    const skor_esai_100 = maxEsai > 0 ? Math.round((rawEsai / maxEsai) * 100) : 0;
+                    await prisma.exam_attempts.updateMany({
+                        where: { user_id: job.userId, exam_id: job.examId },
+                        data: { skor_esai_100 }
+                    });
+                    console.log(`[AI Worker] exam_attempts skor_esai_100 updated: ${skor_esai_100}`);
+                } catch (attemptErr) {
+                    console.error('❌ Gagal update exam_attempts:', attemptErr.message);
+                }
             } else {
                 console.log(`[AI Worker] Gagal menilai ID: ${job.responseId}, mengembalikan ke antrean.`);
                 correctionQueue.push(job); // Kembalikan ke antrean jika API gagal
@@ -79,8 +102,8 @@ const processQueue = async () => {
 };
 
 // Fungsi yang akan dipanggil oleh studentController
-exports.addToQueue = (responseId, soal, kunciJawaban, jawabanMhs) => {
-    correctionQueue.push({ responseId, soal, kunciJawaban, jawabanMhs });
+exports.addToQueue = (responseId, soal, kunciJawaban, jawabanMhs, userId, examId) => {
+    correctionQueue.push({ responseId, soal, kunciJawaban, jawabanMhs, userId, examId });
     // Bangunkan mesin jika sedang tidur
     processQueue(); 
 };
