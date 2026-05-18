@@ -105,20 +105,20 @@ exports.submitExam = async (req, res) => {
 
             } else if (soal.tipe_soal === 'TIPE_3') { 
                 // 🤖 LOGIKA AI (ESAI)
-                skorDidapat = 0; 
+                skorDidapat = null; 
                 statusNilai = 'menunggu'; 
                 
-                if (jawabanMhs && soal.kunci_jawaban) {
+                if (jawabanMhs) {
                     antreanEsaiAI.push({
                         question_id: soal.id,
                         soalTeks: soal.isi_soal || "Soal Esai IT",
-                        kunciJawaban: soal.kunci_jawaban,
+                        kunciJawaban: soal.kunci_jawaban || "",
                         jawabanMhs: jawabanMhs
                     });
                 }
             } else if (soal.tipe_soal === 'TIPE_4') { 
                 // 📁 LOGIKA UPLOAD
-                skorDidapat = 0; 
+                skorDidapat = null; 
                 statusNilai = 'menunggu'; 
             }
 
@@ -126,7 +126,7 @@ exports.submitExam = async (req, res) => {
                 user_id: user_id, exam_id: parseInt(exam_id), question_id: soal.id,
                 jawaban_teks: jawabanMhs, file_path: pathFile, skor: skorDidapat, status_penilaian: statusNilai 
             });
-            totalSkorDiperoleh += skorDidapat;
+            totalSkorDiperoleh += (skorDidapat || 0);
         }
 
         // 1. Simpan semua jawaban ke Database

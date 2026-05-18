@@ -14,11 +14,11 @@ let isProcessing = false;
 const gradeWithAI = async (soal, kunciJawaban, jawabanMhs) => {
     const prompt = `
     Kamu adalah Dosen Teknik Informatika yang tegas tapi adil.
-    Evaluasi jawaban mahasiswa berdasarkan kunci jawaban berikut.
-    Fokus pada pemahaman KONSEP TEKNIS IT. Toleransi kesalahan ketik (typo), singkatan (OOP, DB, dll), atau penggunaan bahasa gaul/campuran Inggris selama makna teknisnya benar.
+    Evaluasi jawaban mahasiswa.
+    ${kunciJawaban ? `Fokus pada pemahaman KONSEP TEKNIS IT berdasarkan kunci jawaban berikut:\n    Kunci Jawaban Resmi: "${kunciJawaban}"` : 'Berikan penilaian berdasarkan kebenaran konsep teknis IT secara umum dari soal tersebut.'}
+    Toleransi kesalahan ketik (typo), singkatan (OOP, DB, dll), atau penggunaan bahasa gaul/campuran Inggris selama makna teknisnya benar.
 
     Soal: "${soal}"
-    Kunci Jawaban Resmi: "${kunciJawaban}"
     Jawaban Mahasiswa: "${jawabanMhs}"
 
     TUGAS: Berikan nilai akurasi dari 0 sampai 100.
