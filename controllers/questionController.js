@@ -14,8 +14,20 @@ exports.getQuestions = async (req, res) => {
         });
 
         const formattedData = questions.map(q => ({
-            id: q.id, exam_id: q.exam_id, tipe_soal: q.tipe_soal, isi_soal: q.isi_soal, kunci_jawaban: q.kunci_jawaban,
-            opsi_jawaban: q.tipe_soal === 'TIPE_1' ? JSON.stringify(q.question_options.map(opt => opt.teks_pilihan)) : null
+            id: q.id,
+            exam_id: q.exam_id,
+            tipe_soal: q.tipe_soal,
+            isi_soal: q.isi_soal,
+            kunci_jawaban: q.kunci_jawaban,
+            bobot_nilai: q.bobot_nilai,
+            cpmk: q.cpmk,
+            // Return options for both TIPE_1 and TIPE_2
+            opsi_jawaban: (q.tipe_soal === 'TIPE_1' || q.tipe_soal === 'TIPE_2')
+                ? JSON.stringify(q.question_options.map(opt => opt.teks_pilihan))
+                : null,
+            question_options: (q.tipe_soal === 'TIPE_1' || q.tipe_soal === 'TIPE_2')
+                ? q.question_options
+                : []
         }));
         res.status(200).json({ data: formattedData });
     } catch (error) { res.status(500).json({ message: "Gagal mengambil soal." }); }
@@ -30,6 +42,8 @@ exports.createQuestion = async (req, res) => {
         }
 
         let parsedOpsi = null;
+
+        // Validasi untuk TIPE_1 (Single Choice)
         if (tipe_soal === 'TIPE_1') {
             if (!isNonEmptyString(kunci_jawaban)) {
                 return res.status(400).json({ message: "kunci_jawaban wajib untuk TIPE_1." });
@@ -37,6 +51,17 @@ exports.createQuestion = async (req, res) => {
             parsedOpsi = Array.isArray(opsi_jawaban) ? opsi_jawaban : JSON.parse(opsi_jawaban || '[]');
             if (!Array.isArray(parsedOpsi) || parsedOpsi.length < 2) {
                 return res.status(400).json({ message: "opsi_jawaban TIPE_1 minimal 2 pilihan." });
+            }
+        }
+
+        // Validasi untuk TIPE_2 (Multiple Choice)
+        if (tipe_soal === 'TIPE_2') {
+            if (!isNonEmptyString(kunci_jawaban)) {
+                return res.status(400).json({ message: "kunci_jawaban wajib untuk TIPE_2 (format: A,C,E)." });
+            }
+            parsedOpsi = Array.isArray(opsi_jawaban) ? opsi_jawaban : JSON.parse(opsi_jawaban || '[]');
+            if (!Array.isArray(parsedOpsi) || parsedOpsi.length < 2) {
+                return res.status(400).json({ message: "opsi_jawaban TIPE_2 minimal 2 pilihan." });
             }
         }
 
@@ -50,9 +75,12 @@ exports.createQuestion = async (req, res) => {
             data: { exam_id: examId, cpmk: "CPMK-1", tipe_soal, isi_soal, kunci_jawaban, bobot_nilai: 10.00 }
         });
 
-        if (tipe_soal === 'TIPE_1' && parsedOpsi) {
+        // Create options for TIPE_1 and TIPE_2 (both use multiple choice)
+        if ((tipe_soal === 'TIPE_1' || tipe_soal === 'TIPE_2') && parsedOpsi) {
             const opsiData = parsedOpsi.map((teks, index) => ({
-                question_id: newQuestion.id, label_pilihan: ['A', 'B', 'C', 'D'][index], teks_pilihan: teks
+                question_id: newQuestion.id,
+                label_pilihan: ['A', 'B', 'C', 'D', 'E'][index],  // Support up to E
+                teks_pilihan: teks
             }));
             await prisma.question_options.createMany({ data: opsiData });
         }
@@ -101,22 +129,24 @@ exports.updateQuestion = async (req, res) => {
             }
         });
 
-        if (tipe_soal === 'TIPE_1' && opsi_jawaban) {
+        // Update options for TIPE_1 and TIPE_2
+        if ((tipe_soal === 'TIPE_1' || tipe_soal === 'TIPE_2') && opsi_jawaban) {
             const opsiArray = Array.isArray(opsi_jawaban) ? opsi_jawaban : JSON.parse(opsi_jawaban);
             if (!Array.isArray(opsiArray) || opsiArray.length < 2) {
-                return res.status(400).json({ message: "opsi_jawaban TIPE_1 minimal 2 pilihan." });
+                return res.status(400).json({ message: "opsi_jawaban minimal 2 pilihan." });
             }
             await prisma.question_options.deleteMany({ where: { question_id: questionId } });
             await prisma.question_options.createMany({
                 data: opsiArray.map((teks, index) => ({
                     question_id: questionId,
-                    label_pilihan: ['A', 'B', 'C', 'D'][index] || String(index + 1),
+                    label_pilihan: ['A', 'B', 'C', 'D', 'E'][index] || String(index + 1),
                     teks_pilihan: teks
                 }))
             });
         }
 
-        if (tipe_soal && tipe_soal !== 'TIPE_1') {
+        // Delete options for TIPE_3 and TIPE_4 (essay/file upload don't need options)
+        if (tipe_soal && (tipe_soal === 'TIPE_3' || tipe_soal === 'TIPE_4')) {
             await prisma.question_options.deleteMany({ where: { question_id: questionId } });
         }
 
