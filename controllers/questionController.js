@@ -38,9 +38,22 @@ exports.createQuestion = async (req, res) => {
         const { exam_id, tipe_soal, isi_soal, opsi_jawaban, kunci_jawaban, bobot_nilai, cpmk } = req.body;
         const examId = toPositiveInt(exam_id);
 
+        // DEBUG: Log semua input yang masuk
+        console.log('[createQuestion] 📥 Body received:', JSON.stringify(req.body));
+        console.log('[createQuestion] 🔍 examId:', examId, '| tipe_soal:', tipe_soal, '| isi_soal length:', isi_soal?.length);
+
         // Basic validation
-        if (!examId || !ALLOWED_QUESTION_TYPES.has(tipe_soal) || !isNonEmptyString(isi_soal)) {
-            return res.status(400).json({ message: "Input soal tidak valid." });
+        if (!examId) {
+            console.log('[createQuestion] ❌ FAIL: examId tidak valid:', exam_id);
+            return res.status(400).json({ message: "exam_id tidak valid atau tidak ditemukan.", debug: { exam_id, parsed: examId } });
+        }
+        if (!ALLOWED_QUESTION_TYPES.has(tipe_soal)) {
+            console.log('[createQuestion] ❌ FAIL: tipe_soal tidak valid:', tipe_soal, '| Allowed:', [...ALLOWED_QUESTION_TYPES]);
+            return res.status(400).json({ message: "tipe_soal tidak valid.", debug: { tipe_soal, allowed: [...ALLOWED_QUESTION_TYPES] } });
+        }
+        if (!isNonEmptyString(isi_soal)) {
+            console.log('[createQuestion] ❌ FAIL: isi_soal kosong atau tidak valid:', isi_soal);
+            return res.status(400).json({ message: "isi_soal wajib diisi.", debug: { isi_soal } });
         }
 
         let parsedOpsi = null;
@@ -111,8 +124,12 @@ exports.createQuestion = async (req, res) => {
             }));
             await prisma.question_options.createMany({ data: opsiData });
         }
-        res.status(201).json({ message: "Soal sukses dibuat!" });
-    } catch (error) { res.status(500).json({ message: "Gagal menyimpan soal." }); }
+        console.log('[createQuestion] ✅ Soal berhasil dibuat, ID:', newQuestion.id);
+        res.status(201).json({ message: "Soal sukses dibuat!", id: newQuestion.id });
+    } catch (error) {
+        console.error('[createQuestion] 💥 Unexpected Error:', error.message, error.stack);
+        res.status(500).json({ message: "Gagal menyimpan soal.", error: error.message });
+    }
 };
 
 exports.updateQuestion = async (req, res) => {
