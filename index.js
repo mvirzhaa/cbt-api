@@ -22,7 +22,21 @@ const dosenRoutes = require('./routes/dosen');
 // ⚙️ SETUP MIDDLEWARE GLOBAL
 // =========================================================================
 app.use(cors());
-app.use(express.json());
+app.use((req, res, next) => {
+    express.json()(req, res, (err) => {
+        if (err) {
+            // JSON Parse Error dari body-parser
+            console.error(`[JSON Parse Error] ${req.method} ${req.url}`);
+            console.error(`  Raw Content-Type: ${req.headers['content-type']}`);
+            console.error(`  Error: ${err.message}`);
+            return res.status(400).json({
+                message: "Request body bukan JSON yang valid. Pastikan Content-Type: application/json dan body JSON tidak rusak.",
+                detail: err.message
+            });
+        }
+        next();
+    });
+});
 app.use(express.urlencoded({ extended: true }));
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
@@ -43,6 +57,17 @@ app.use('/api/grading', gradingRoutes);
 app.use('/api/materi', materiRoutes);
 app.use('/api/proctoring', proctoringRoutes);
 app.use('/api/dosen', dosenRoutes);
+
+// =========================================================================
+// 🛡️ GLOBAL ERROR HANDLER
+// =========================================================================
+app.use((err, req, res, next) => {
+    console.error(`[Global Error] ${req.method} ${req.url} → ${err.status || 500}: ${err.message}`);
+    res.status(err.status || 500).json({
+        message: err.message || "Internal server error",
+        ...(process.env.NODE_ENV !== 'production' && { stack: err.stack })
+    });
+});
 
 // =========================================================================
 // 🚀 START SERVER
