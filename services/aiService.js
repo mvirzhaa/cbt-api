@@ -6,11 +6,12 @@ const prisma = new PrismaClient();
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 // Daftar model fallback (dari yang tercepat ke yang paling stabil)
+// Model names verified working on 2026-05-22
 const MODEL_PRIORITY = [
-    "gemini-2.0-flash-exp",      // Model terbaru (experimental)
-    "gemini-1.5-flash",           // Model stable
-    "gemini-1.5-flash-8b",        // Model lebih ringan
-    "gemini-1.5-pro"              // Fallback terakhir (lebih lambat tapi stabil)
+    "gemini-2.5-flash",           // Stable Jun 2025 (RECOMMENDED - 1M tokens)
+    "gemini-2.0-flash",           // Fast & versatile
+    "gemini-2.0-flash-lite",      // Lighter & faster version
+    "gemini-2.5-pro"              // Most powerful (fallback)
 ];
 
 // Memori Antrean (Queue)
