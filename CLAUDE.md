@@ -58,12 +58,19 @@ TIAS_SHARED_SECRET="integration_key"  # Optional: for TIAS integration
   - Partial score based on proportion of correct answers minus wrong answers
   - Minimum score is 0
 
-**AI Grading (TIPE_3)** - Background queue:
+**AI Grading (TIPE_3)** - Background queue with automatic fallback:
 1. **Submission**: Student submits exam via `POST /api/student/submit-exam`
 2. **Queue**: TIPE_3 (essay) responses are added to `correctionQueue` in `aiService.js`
-3. **Background Worker**: Processes queue with 4-second delay between requests (Gemini rate limit: 15 req/min)
-4. **Score Update**: AI scores stored in `student_responses.skor` with status remaining `menunggu`
-5. **Human Verification**: Dosen reviews/approves AI scores via grading endpoints
+3. **Model Fallback**: System tries models in priority order:
+   - `gemini-2.0-flash-exp` → `gemini-1.5-flash` → `gemini-1.5-flash-8b` → `gemini-1.5-pro`
+   - Automatically switches if 404/503/429 errors occur
+4. **Retry Logic**: Max 5 retries per job with exponential backoff (4s, 6s, 8s, 10s, 12s)
+5. **Background Worker**: Processes queue with base 4-second delay (respects Gemini rate limit: 15 req/min free tier)
+6. **Score Update**: AI scores stored in `student_responses.skor` with status remaining `menunggu`
+7. **Human Verification**: Dosen reviews/approves AI scores via grading endpoints
+8. **Failure Handling**: After 5 failed retries, sets score to 0 and requires manual grading
+
+See `AI_TROUBLESHOOTING.md` for error handling details.
 
 ### Grading Calculation Modes
 Set via `exams.grading_type` enum:
@@ -143,3 +150,10 @@ Both AI auto-grading and manual grading update `exam_attempts` table:
 - AI prompt is in Indonesian (targeted for Indonesian universities)
 - Rate limiting relies on delay, not queue throttling library
 - TIPE_2 multiple choice answer format must be consistent (comma-separated string or array)
+- Gemini free tier limited to 15 req/min (consider paid tier for high-volume exams)
+
+## Troubleshooting
+
+- **AI Service Issues**: See `AI_TROUBLESHOOTING.md` for common errors (404, 503, 429) and solutions
+- **Multiple Choice**: See `MULTIPLE_CHOICE_GUIDE.md` for frontend integration
+- **Test Cases**: See `TEST_MULTIPLE_CHOICE.md` for scoring validation
