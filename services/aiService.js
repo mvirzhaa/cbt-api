@@ -187,6 +187,26 @@ const processQueue = async () => {
 // Fungsi yang akan dipanggil oleh studentController
 exports.addToQueue = (responseId, soal, kunciJawaban, jawabanMhs, userId, examId) => {
     correctionQueue.push({ responseId, soal, kunciJawaban, jawabanMhs, userId, examId });
+    console.log(`[AI Worker] ➕ Job added to queue. Total queue: ${correctionQueue.length}`);
     // Bangunkan mesin jika sedang tidur
-    processQueue(); 
+    processQueue();
+};
+
+// Fungsi untuk clear queue (untuk debugging/maintenance)
+exports.clearQueue = () => {
+    const queueLength = correctionQueue.length;
+    correctionQueue.length = 0; // Clear array
+    isProcessing = false;
+    console.log(`[AI Worker] 🗑️  Queue cleared. ${queueLength} jobs removed.`);
+    return { cleared: queueLength };
+};
+
+// Fungsi untuk get queue status
+exports.getQueueStatus = () => {
+    return {
+        queueLength: correctionQueue.length,
+        isProcessing: isProcessing,
+        currentModelIndex: currentModelIndex,
+        modelPriority: MODEL_PRIORITY
+    };
 };

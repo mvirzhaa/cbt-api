@@ -98,12 +98,15 @@ node index.js
 
 ## 📚 Documentation
 
-- **Multiple Choice:** `MULTIPLE_CHOICE_GUIDE.md` - Frontend integration guide
-- **Test Cases:** `TEST_MULTIPLE_CHOICE.md` - Scoring validation & examples
-- **AI Errors:** `FIX_AI_ERROR_NOW.md` - Quick fix untuk 404/503 errors ⚡
-- **Troubleshooting:** `AI_TROUBLESHOOTING.md` - Complete error handling guide
-- **Deployment:** `DEPLOY_TO_SERVER.md` - Server deployment steps
-- **Architecture:** `CLAUDE.md` - System architecture documentation
+Complete documentation available in [`docs/`](./docs/) folder:
+
+- **[Multiple Choice Guide](./docs/MULTIPLE_CHOICE_GUIDE.md)** - Frontend integration guide
+- **[Test Cases](./docs/TEST_MULTIPLE_CHOICE.md)** - Scoring validation & examples
+- **[AI Quick Fix](./docs/FIX_AI_ERROR_NOW.md)** - Quick fix untuk 404/503 errors ⚡
+- **[AI Troubleshooting](./docs/AI_TROUBLESHOOTING.md)** - Complete error handling guide
+- **[Deployment Guide](./docs/DEPLOY_TO_SERVER.md)** - Server deployment steps
+- **[Testing Checklist](./docs/TESTING_CHECKLIST.md)** - Pre-deployment testing guide
+- **[Architecture](./CLAUDE.md)** - System architecture documentation
 
 ## 🚀 Quick Commands
 

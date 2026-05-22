@@ -35,18 +35,23 @@ exports.getQuestions = async (req, res) => {
 
 exports.createQuestion = async (req, res) => {
     try {
-        const { exam_id, tipe_soal, isi_soal, opsi_jawaban, kunci_jawaban } = req.body;
+        const { exam_id, tipe_soal, isi_soal, opsi_jawaban, kunci_jawaban, bobot_nilai, cpmk } = req.body;
         const examId = toPositiveInt(exam_id);
+
+        // Basic validation
         if (!examId || !ALLOWED_QUESTION_TYPES.has(tipe_soal) || !isNonEmptyString(isi_soal)) {
             return res.status(400).json({ message: "Input soal tidak valid." });
         }
 
         let parsedOpsi = null;
 
-        // Validasi untuk TIPE_1 (Single Choice)
+        // Validasi untuk TIPE_1 (Single Choice - needs options & single answer key)
         if (tipe_soal === 'TIPE_1') {
             if (!isNonEmptyString(kunci_jawaban)) {
                 return res.status(400).json({ message: "kunci_jawaban wajib untuk TIPE_1." });
+            }
+            if (!opsi_jawaban) {
+                return res.status(400).json({ message: "opsi_jawaban wajib untuk TIPE_1." });
             }
             parsedOpsi = Array.isArray(opsi_jawaban) ? opsi_jawaban : JSON.parse(opsi_jawaban || '[]');
             if (!Array.isArray(parsedOpsi) || parsedOpsi.length < 2) {
@@ -54,10 +59,13 @@ exports.createQuestion = async (req, res) => {
             }
         }
 
-        // Validasi untuk TIPE_2 (Multiple Choice)
+        // Validasi untuk TIPE_2 (Multiple Choice - needs options & comma-separated answer key)
         if (tipe_soal === 'TIPE_2') {
             if (!isNonEmptyString(kunci_jawaban)) {
                 return res.status(400).json({ message: "kunci_jawaban wajib untuk TIPE_2 (format: A,C,E)." });
+            }
+            if (!opsi_jawaban) {
+                return res.status(400).json({ message: "opsi_jawaban wajib untuk TIPE_2." });
             }
             parsedOpsi = Array.isArray(opsi_jawaban) ? opsi_jawaban : JSON.parse(opsi_jawaban || '[]');
             if (!Array.isArray(parsedOpsi) || parsedOpsi.length < 2) {
@@ -65,14 +73,33 @@ exports.createQuestion = async (req, res) => {
             }
         }
 
+        // TIPE_3 (Essay) and TIPE_4 (File Upload) don't require opsi_jawaban
+        // kunci_jawaban is optional for these types (for reference/rubric)
+
         const exam = await prisma.exams.findUnique({ where: { id: examId } });
         if (!exam) return res.status(404).json({ message: "Ujian tidak ditemukan." });
         if (exam.kode_dosen !== req.user.id.toString()) {
             return res.status(403).json({ message: "Anda tidak berhak menambah soal di ujian ini." });
         }
 
+        // Parse bobot_nilai
+        let parsedBobot = 10.00; // default
+        if (bobot_nilai !== undefined) {
+            parsedBobot = Number.parseFloat(bobot_nilai);
+            if (!Number.isFinite(parsedBobot) || parsedBobot < 0) {
+                return res.status(400).json({ message: "bobot_nilai harus angka >= 0." });
+            }
+        }
+
         const newQuestion = await prisma.questions.create({
-            data: { exam_id: examId, cpmk: "CPMK-1", tipe_soal, isi_soal, kunci_jawaban, bobot_nilai: 10.00 }
+            data: {
+                exam_id: examId,
+                cpmk: cpmk || "CPMK-1",
+                tipe_soal,
+                isi_soal,
+                kunci_jawaban: kunci_jawaban || null,
+                bobot_nilai: parsedBobot
+            }
         });
 
         // Create options for TIPE_1 and TIPE_2 (both use multiple choice)
