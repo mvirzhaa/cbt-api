@@ -1,0 +1,59 @@
+feat: add robust AI grading with fallback models and multiple choice support
+
+🎯 Major Features:
+- TIPE_2 converted to multiple choice (5 options A-E) with partial scoring
+- AI auto-grading with automatic model fallback (gemini-2.0-flash-exp → gemini-1.5-flash → gemini-1.5-flash-8b → gemini-1.5-pro)
+- Robust retry logic: max 5 retries with exponential backoff
+- Handle 404/503/429 errors gracefully
+
+✅ Changes:
+- controllers/studentController.js: Multiple choice grading logic with partial scoring
+- services/aiService.js: Model fallback + retry logic + better error handling
+- services/gradingService.js: Support TIPE_2 in scoring calculation
+- controllers/gradingController.js: Update recalculation for TIPE_2
+
+📚 Documentation:
+- MULTIPLE_CHOICE_GUIDE.md: Frontend integration guide
+- TEST_MULTIPLE_CHOICE.md: Comprehensive test cases
+- AI_TROUBLESHOOTING.md: Error handling guide
+- FIX_AI_ERROR_NOW.md: Quick fix guide (5 minutes)
+- DEPLOY_TO_SERVER.md: Deployment steps
+- test_gemini_models.js: Model availability tester
+- example_questions_seed.js: Demo data seeder
+- quick_fix_ai.sh: Automated fix script
+
+🔧 Bug Fixes:
+- Fix Gemini API 404 errors (model not found)
+- Fix 503 errors (service unavailable)
+- Fix queue stuck issues
+- Prevent infinite retry loops
+
+💡 Scoring Algorithm (TIPE_2):
+Formula: max(0, (correct - wrong) / total_keys) × bobot
+- Full score if all correct and no wrong answers
+- Partial score based on proportion
+- Minimum score is 0 (no negative scores)
+
+Example:
+Key: A,C,E (3 correct)
+Answer: A,B,C (2 correct, 1 wrong)
+Score: (2 - 1) / 3 × 10 = 3.33
+
+🚀 Breaking Changes:
+- TIPE_2 changed from "teks pendek" to "multiple choice"
+- TIPE_2 now uses kunci_jawaban format: "A,C,E" (comma-separated)
+- TIPE_2 answers from frontend: "A,C,E" or ["A","C","E"]
+
+⚡ Performance:
+- Base delay: 4 seconds between AI requests
+- Exponential backoff on retry: 4s, 6s, 8s, 10s, 12s
+- Respects Gemini free tier: 15 req/min
+
+📊 Testing:
+Run: node test_gemini_models.js
+Expected: At least 1 working model found
+
+🔗 Related Issues:
+- Fixes #503_service_unavailable
+- Fixes #404_model_not_found
+- Resolves TIPE_2 manual grading requirement

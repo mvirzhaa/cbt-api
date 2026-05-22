@@ -95,6 +95,28 @@ node index.js
 
 - Semua tipe soal kecuali TIPE_4 sudah auto-grade (TIPE_1 & TIPE_2 instant, TIPE_3 via AI queue).
 - Testing otomatis belum tersedia di `package.json`.
-- Lihat `MULTIPLE_CHOICE_GUIDE.md` untuk dokumentasi lengkap multiple choice.
-- Lihat `TEST_MULTIPLE_CHOICE.md` untuk test cases dan contoh scoring.
-- Jalankan `node example_questions_seed.js` untuk seed contoh soal.
+
+## 📚 Documentation
+
+- **Multiple Choice:** `MULTIPLE_CHOICE_GUIDE.md` - Frontend integration guide
+- **Test Cases:** `TEST_MULTIPLE_CHOICE.md` - Scoring validation & examples
+- **AI Errors:** `FIX_AI_ERROR_NOW.md` - Quick fix untuk 404/503 errors ⚡
+- **Troubleshooting:** `AI_TROUBLESHOOTING.md` - Complete error handling guide
+- **Deployment:** `DEPLOY_TO_SERVER.md` - Server deployment steps
+- **Architecture:** `CLAUDE.md` - System architecture documentation
+
+## 🚀 Quick Commands
+
+```bash
+# Test available Gemini models
+node test_gemini_models.js
+
+# Seed example questions
+node example_questions_seed.js
+
+# Quick fix AI errors (Linux/Mac)
+bash quick_fix_ai.sh
+
+# Monitor AI worker logs
+pm2 logs | grep "AI Worker"
+```
