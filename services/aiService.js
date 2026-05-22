@@ -14,6 +14,14 @@ const MODEL_PRIORITY = [
     "gemini-2.5-pro"              // Most powerful (fallback)
 ];
 
+// DEBUG: Log saat module di-load
+console.log("=".repeat(60));
+console.log("🔧 aiService.js LOADED - Model Priority:");
+MODEL_PRIORITY.forEach((model, idx) => {
+    console.log(`   ${idx + 1}. ${model}`);
+});
+console.log("=".repeat(60));
+
 // Memori Antrean (Queue)
 const correctionQueue = [];
 let isProcessing = false;
@@ -38,7 +46,12 @@ const gradeWithAI = async (soal, kunciJawaban, jawabanMhs, retryCount = 0) => {
 
     for (let attempt = 0; attempt < maxRetries; attempt++) {
         try {
-            const modelName = MODEL_PRIORITY[(currentModelIndex + attempt) % MODEL_PRIORITY.length];
+            const modelIndex = (currentModelIndex + attempt) % MODEL_PRIORITY.length;
+            const modelName = MODEL_PRIORITY[modelIndex];
+
+            // DEBUG: Extra logging
+            console.log(`[AI Worker] 🔍 DEBUG - currentModelIndex: ${currentModelIndex}, attempt: ${attempt}, modelIndex: ${modelIndex}`);
+            console.log(`[AI Worker] 🔍 DEBUG - MODEL_PRIORITY array:`, MODEL_PRIORITY);
             console.log(`[AI Worker] Mencoba model: ${modelName} (attempt ${attempt + 1}/${maxRetries})`);
 
             const model = genAI.getGenerativeModel({ model: modelName });
