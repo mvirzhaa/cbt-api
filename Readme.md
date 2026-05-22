@@ -8,9 +8,9 @@ Backend API berbasis Node.js untuk sistem Computer Based Test (CBT) multi-peran.
 - RBAC untuk `super_admin`, `admin`, `dosen`, `mahasiswa`.
 - Manajemen mata kuliah, ujian, bank soal, dan penilaian.
 - 4 tipe soal:
-  - `TIPE_1`: Pilihan ganda (auto-grade).
-  - `TIPE_2`: Teks pendek (penilaian manual/flow dosen).
-  - `TIPE_3`: Esai (auto-grade berbasis similarity).
+  - `TIPE_1`: Pilihan ganda single choice (5 opsi A-E, pilih 1, auto-grade).
+  - `TIPE_2`: Pilihan ganda multiple choice (5 opsi A-E, pilih > 1, auto-grade dengan partial scoring).
+  - `TIPE_3`: Esai (auto-grade menggunakan Gemini AI dengan background queue).
   - `TIPE_4`: Upload file (penilaian manual).
 - Upload jawaban file via Multer.
 - Rekap nilai per mata kuliah dan per sesi ujian.
@@ -22,6 +22,7 @@ Backend API berbasis Node.js untuk sistem Computer Based Test (CBT) multi-peran.
 - JWT (`jsonwebtoken`)
 - Password hashing (`bcryptjs`)
 - Upload file (`multer`)
+- AI Integration (`@google/generative-ai` - Gemini 2.5-flash)
 
 ## Keamanan
 
@@ -47,6 +48,7 @@ Buat file `.env` minimal:
 ```env
 DATABASE_URL="mysql://USER:PASSWORD@HOST:3306/DB_NAME"
 JWT_SECRET="ganti_dengan_secret_kuat"
+GEMINI_API_KEY="your_gemini_api_key_here"
 PORT=3000
 ```
 
@@ -91,5 +93,8 @@ node index.js
 
 ## Known Notes
 
-- `TIPE_2` belum di-auto-grade di endpoint submit saat ini.
+- Semua tipe soal kecuali TIPE_4 sudah auto-grade (TIPE_1 & TIPE_2 instant, TIPE_3 via AI queue).
 - Testing otomatis belum tersedia di `package.json`.
+- Lihat `MULTIPLE_CHOICE_GUIDE.md` untuk dokumentasi lengkap multiple choice.
+- Lihat `TEST_MULTIPLE_CHOICE.md` untuk test cases dan contoh scoring.
+- Jalankan `node example_questions_seed.js` untuk seed contoh soal.

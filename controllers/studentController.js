@@ -82,10 +82,10 @@ exports.submitExam = async (req, res) => {
             let statusNilai = 'menunggu';
             const bobot = soal.bobot_nilai ? parseFloat(soal.bobot_nilai) : 10.0;
 
-            if (soal.tipe_soal === 'TIPE_1') { 
-                // Logika Pilihan Ganda
-                const jawabanMhsAman = String(jawabanMhs).trim().toUpperCase(); 
-                const kunciAsli = String(soal.kunci_jawaban).trim().toUpperCase(); 
+            if (soal.tipe_soal === 'TIPE_1') {
+                // Logika Pilihan Ganda Single Choice (A-E)
+                const jawabanMhsAman = String(jawabanMhs).trim().toUpperCase();
+                const kunciAsli = String(soal.kunci_jawaban).trim().toUpperCase();
                 const opsiDipilih = soal.question_options?.find(opt => String(opt.label_pilihan).toUpperCase() === jawabanMhsAman);
                 let isCorrect = false;
 
@@ -94,13 +94,52 @@ exports.submitExam = async (req, res) => {
                 } else if ((kunciAsli === "0" && jawabanMhsAman === "A") ||
                            (kunciAsli === "1" && jawabanMhsAman === "B") ||
                            (kunciAsli === "2" && jawabanMhsAman === "C") ||
-                           (kunciAsli === "3" && jawabanMhsAman === "D")) {
+                           (kunciAsli === "3" && jawabanMhsAman === "D") ||
+                           (kunciAsli === "4" && jawabanMhsAman === "E")) {
                     isCorrect = true;
                 } else if (opsiDipilih && kunciAsli === String(opsiDipilih.teks_pilihan).trim().toUpperCase()) {
                     isCorrect = true;
                 }
 
-                if (isCorrect) skorDidapat = bobot; 
+                if (isCorrect) skorDidapat = bobot;
+                statusNilai = 'selesai';
+
+            } else if (soal.tipe_soal === 'TIPE_2') {
+                // Logika Pilihan Ganda Multiple Choice (A-E, bisa pilih lebih dari 1)
+                // Format jawaban: "A,B,C" atau ["A","B","C"]
+                let jawabanArray = [];
+                if (Array.isArray(jawabanMhs)) {
+                    jawabanArray = jawabanMhs.map(j => String(j).trim().toUpperCase());
+                } else {
+                    jawabanArray = String(jawabanMhs).split(',').map(j => j.trim().toUpperCase()).filter(j => j);
+                }
+
+                // Kunci jawaban format: "A,B,C"
+                const kunciArray = String(soal.kunci_jawaban || "").split(',').map(k => k.trim().toUpperCase()).filter(k => k);
+
+                // Hitung berapa banyak yang benar
+                const kunciSet = new Set(kunciArray);
+                const jawabanSet = new Set(jawabanArray);
+
+                // Jawaban benar = yang dipilih DAN ada di kunci
+                const benarDipilih = jawabanArray.filter(j => kunciSet.has(j)).length;
+                // Jawaban salah = yang dipilih tapi TIDAK ada di kunci
+                const salahDipilih = jawabanArray.filter(j => !kunciSet.has(j)).length;
+                // Jawaban tidak dipilih = yang ada di kunci tapi TIDAK dipilih
+                const tidakDipilih = kunciArray.filter(k => !jawabanSet.has(k)).length;
+
+                // Scoring: proporsi jawaban benar
+                const totalKunci = kunciArray.length;
+                if (totalKunci > 0 && salahDipilih === 0 && tidakDipilih === 0) {
+                    // Semua benar, tidak ada salah
+                    skorDidapat = bobot;
+                } else if (totalKunci > 0) {
+                    // Partial scoring: (benar - salah) / total * bobot, minimal 0
+                    const nilaiProporsi = Math.max(0, (benarDipilih - salahDipilih) / totalKunci);
+                    skorDidapat = nilaiProporsi * bobot;
+                } else {
+                    skorDidapat = 0;
+                }
                 statusNilai = 'selesai';
 
             } else if (soal.tipe_soal === 'TIPE_3') { 
@@ -133,16 +172,19 @@ exports.submitExam = async (req, res) => {
         await prisma.student_responses.createMany({ data: rekamJawaban });
 
         // 2. Hitung skor_pilgan_100 (skala 0-100) dari jawaban yang sudah tersimpan
+        // TIPE_1 dan TIPE_2 sekarang keduanya pilihan ganda (auto-grading)
         let maxPilgan = 0;
         questions.forEach(soal => {
-            if (soal.tipe_soal === 'TIPE_1') {
+            if (soal.tipe_soal === 'TIPE_1' || soal.tipe_soal === 'TIPE_2') {
                 maxPilgan += soal.bobot_nilai ? parseFloat(soal.bobot_nilai) : 10.0;
             }
         });
         let rawPilgan = 0;
         rekamJawaban.forEach(r => {
             const soal = questions.find(q => q.id === r.question_id);
-            if (soal?.tipe_soal === 'TIPE_1') rawPilgan += r.skor;
+            if (soal?.tipe_soal === 'TIPE_1' || soal?.tipe_soal === 'TIPE_2') {
+                rawPilgan += r.skor;
+            }
         });
         const skor_pilgan_100 = maxPilgan > 0 ? Math.round((rawPilgan / maxPilgan) * 100) : 0;
 

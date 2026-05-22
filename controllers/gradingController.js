@@ -76,7 +76,7 @@ exports.getAnswersToGrade = async (req, res) => {
     try {
         const examId = toPositiveInt(req.params.exam_id);
         if (!examId) return res.status(400).json({ message: "ID ujian tidak valid." });
-        
+
         const examCheck = await prisma.exams.findUnique({ where: { id: examId } });
         if (!examCheck || examCheck.kode_dosen !== req.user.id.toString()) {
             return res.status(403).json({ message: "Akses Ditolak!" });
@@ -84,13 +84,91 @@ exports.getAnswersToGrade = async (req, res) => {
 
         const answers = await prisma.student_responses.findMany({
             where: { exam_id: examId, status_penilaian: 'menunggu' },
-            include: { 
-                users: { select: { nama: true } }, 
-                questions: { select: { isi_soal: true, tipe_soal: true } } 
+            include: {
+                users: { select: { nama: true } },
+                questions: { select: { isi_soal: true, tipe_soal: true } }
             }
         });
         res.status(200).json({ data: answers });
     } catch (error) { res.status(500).json({ message: "Gagal mengambil data jawaban." }); }
+};
+
+// 🌟 Endpoint baru: Mendapatkan SEMUA jawaban (termasuk yang sudah dinilai)
+exports.getAllAnswers = async (req, res) => {
+    try {
+        const examId = toPositiveInt(req.params.exam_id);
+        if (!examId) return res.status(400).json({ message: "ID ujian tidak valid." });
+
+        const examCheck = await prisma.exams.findUnique({ where: { id: examId } });
+        if (!examCheck || examCheck.kode_dosen !== req.user.id.toString()) {
+            return res.status(403).json({ message: "Akses Ditolak!" });
+        }
+
+        const answers = await prisma.student_responses.findMany({
+            where: { exam_id: examId },
+            include: {
+                users: { select: { nama: true, nim: true, username: true } },
+                questions: {
+                    select: {
+                        isi_soal: true,
+                        tipe_soal: true,
+                        kunci_jawaban: true,
+                        opsi_jawaban: true,
+                        bobot_nilai: true
+                    }
+                }
+            },
+            orderBy: [
+                { user_id: 'asc' },
+                { question_id: 'asc' }
+            ]
+        });
+        res.status(200).json({ data: answers });
+    } catch (error) {
+        console.error("❌ ERROR GET ALL ANSWERS:", error);
+        res.status(500).json({ message: "Gagal mengambil data jawaban." });
+    }
+};
+
+// 🌟 Endpoint baru: Mendapatkan semua jawaban per mahasiswa
+exports.getStudentAnswers = async (req, res) => {
+    try {
+        const examId = toPositiveInt(req.params.exam_id);
+        const studentId = toPositiveInt(req.params.student_id);
+
+        if (!examId || !studentId) {
+            return res.status(400).json({ message: "ID ujian atau mahasiswa tidak valid." });
+        }
+
+        const examCheck = await prisma.exams.findUnique({ where: { id: examId } });
+        if (!examCheck || examCheck.kode_dosen !== req.user.id.toString()) {
+            return res.status(403).json({ message: "Akses Ditolak!" });
+        }
+
+        const answers = await prisma.student_responses.findMany({
+            where: {
+                exam_id: examId,
+                user_id: studentId
+            },
+            include: {
+                users: { select: { nama: true, nim: true, username: true } },
+                questions: {
+                    select: {
+                        isi_soal: true,
+                        tipe_soal: true,
+                        kunci_jawaban: true,
+                        opsi_jawaban: true,
+                        bobot_nilai: true
+                    }
+                }
+            },
+            orderBy: { question_id: 'asc' }
+        });
+        res.status(200).json({ data: answers });
+    } catch (error) {
+        console.error("❌ ERROR GET STUDENT ANSWERS:", error);
+        res.status(500).json({ message: "Gagal mengambil data jawaban mahasiswa." });
+    }
 };
 
 exports.submitScore = async (req, res) => {
@@ -125,24 +203,31 @@ exports.submitScore = async (req, res) => {
                 include: { questions: { select: { tipe_soal: true, bobot_nilai: true } } }
             });
             
-            let totalBobotEsai = 0, totalNilaiEsaiBerbobot = 0;
-            let totalBobotFile = 0, totalNilaiFileBerbobot = 0;
+            let gradedBobotEsai = 0, totalNilaiEsaiBerbobot = 0;
+            let gradedBobotFile = 0, totalNilaiFileBerbobot = 0;
 
             allResponses.forEach(r => {
                 const bobot = parseFloat(r.questions.bobot_nilai || 10);
-                const skor = parseFloat(r.skor || 0); // 0-100
-                
-                if (r.questions.tipe_soal === 'TIPE_2' || r.questions.tipe_soal === 'TIPE_3') {
-                    totalBobotEsai += bobot;
-                    totalNilaiEsaiBerbobot += (skor * bobot);
+
+                // TIPE_2 sekarang pilihan ganda multiple choice, bukan esai
+                // Hanya TIPE_3 yang esai (AI grading)
+                if (r.questions.tipe_soal === 'TIPE_3') {
+                    if (r.skor !== null) {
+                        const skor = parseFloat(r.skor || 0); // 0-100
+                        gradedBobotEsai += bobot;
+                        totalNilaiEsaiBerbobot += (skor * bobot);
+                    }
                 } else if (r.questions.tipe_soal === 'TIPE_4') {
-                    totalBobotFile += bobot;
-                    totalNilaiFileBerbobot += (skor * bobot);
+                    if (r.skor !== null) {
+                        const skor = parseFloat(r.skor || 0); // 0-100
+                        gradedBobotFile += bobot;
+                        totalNilaiFileBerbobot += (skor * bobot);
+                    }
                 }
             });
 
-            const skor_esai_100 = totalBobotEsai > 0 ? Math.round(totalNilaiEsaiBerbobot / totalBobotEsai) : 0;
-            const skor_file_100 = totalBobotFile > 0 ? Math.round(totalNilaiFileBerbobot / totalBobotFile) : 0;
+            const skor_esai_100 = gradedBobotEsai > 0 ? Math.round(totalNilaiEsaiBerbobot / gradedBobotEsai) : 0;
+            const skor_file_100 = gradedBobotFile > 0 ? Math.round(totalNilaiFileBerbobot / gradedBobotFile) : 0;
 
             await prisma.exam_attempts.updateMany({
                 where: { user_id: response.user_id, exam_id: response.exam_id },

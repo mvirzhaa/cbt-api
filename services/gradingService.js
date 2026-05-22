@@ -8,7 +8,8 @@ exports.calculateFinalScore = (responses, questions, examConfig) => {
     
     // Keranjang rekapan per kategori
     let summary = {
-        TIPE_1: { obtained: 0, max: 0 }, // Pilgan
+        TIPE_1: { obtained: 0, max: 0 }, // Pilgan Single Choice
+        TIPE_2: { obtained: 0, max: 0 }, // Pilgan Multiple Choice
         TIPE_3: { obtained: 0, max: 0 }, // Esai (AI)
         TIPE_4: { obtained: 0, max: 0 }  // Upload
     };
@@ -37,9 +38,11 @@ exports.calculateFinalScore = (responses, questions, examConfig) => {
     // 2. Kalkulasi berdasarkan Tipe Penilaian Dosen
     if (examConfig.grading_type === 'PER_KATEGORI') {
         // PER KATEGORI: Hitung rasio (Diperoleh / Maksimal) * Bobot Persentase Dosen
-        
-        // Pilihan Ganda
-        const rasioPilgan = summary.TIPE_1.max > 0 ? (summary.TIPE_1.obtained / summary.TIPE_1.max) : 0;
+
+        // Pilihan Ganda (gabungkan TIPE_1 dan TIPE_2)
+        const totalPilganMax = summary.TIPE_1.max + summary.TIPE_2.max;
+        const totalPilganObtained = summary.TIPE_1.obtained + summary.TIPE_2.obtained;
+        const rasioPilgan = totalPilganMax > 0 ? (totalPilganObtained / totalPilganMax) : 0;
         const skorFinalPilgan = rasioPilgan * (examConfig.bobot_pilgan || 0);
 
         // Esai
@@ -54,7 +57,7 @@ exports.calculateFinalScore = (responses, questions, examConfig) => {
 
     } else {
         // PER SOAL: Abaikan persentase, langsung jumlahkan semua skor mentah
-        totalScore = summary.TIPE_1.obtained + summary.TIPE_3.obtained + summary.TIPE_4.obtained;
+        totalScore = summary.TIPE_1.obtained + summary.TIPE_2.obtained + summary.TIPE_3.obtained + summary.TIPE_4.obtained;
     }
 
     // Bulatkan hasil akhir ke 2 angka di belakang koma untuk presisi

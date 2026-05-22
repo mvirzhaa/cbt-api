@@ -68,16 +68,20 @@ const processQueue = async () => {
                         where: { user_id: job.userId, exam_id: job.examId },
                         include: { questions: { select: { tipe_soal: true, bobot_nilai: true } } }
                     });
-                    let totalBobotEsai = 0, totalNilaiEsaiBerbobot = 0;
+                    let gradedBobotEsai = 0, totalNilaiEsaiBerbobot = 0;
                     allResponses.forEach(r => {
-                        if (r.questions.tipe_soal === 'TIPE_2' || r.questions.tipe_soal === 'TIPE_3') {
-                            const bobot = parseFloat(r.questions.bobot_nilai || 10);
-                            const skor = parseFloat(r.skor || 0);
-                            totalBobotEsai += bobot;
-                            totalNilaiEsaiBerbobot += (skor * bobot);
+                        // TIPE_2 sekarang pilihan ganda multiple choice, bukan esai
+                        // Hanya TIPE_3 yang pakai AI (esai)
+                        if (r.questions.tipe_soal === 'TIPE_3') {
+                            if (r.skor !== null) {
+                                const bobot = parseFloat(r.questions.bobot_nilai || 10);
+                                const skor = parseFloat(r.skor || 0);
+                                gradedBobotEsai += bobot;
+                                totalNilaiEsaiBerbobot += (skor * bobot);
+                            }
                         }
                     });
-                    const skor_esai_100 = totalBobotEsai > 0 ? Math.round(totalNilaiEsaiBerbobot / totalBobotEsai) : 0;
+                    const skor_esai_100 = gradedBobotEsai > 0 ? Math.round(totalNilaiEsaiBerbobot / gradedBobotEsai) : 0;
                     await prisma.exam_attempts.updateMany({
                         where: { user_id: job.userId, exam_id: job.examId },
                         data: { skor_esai_100 }

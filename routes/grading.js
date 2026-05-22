@@ -5,6 +5,8 @@ const { verifyToken, isDosen } = require('../middlewares/authMiddleware');
 
 // Base URL: /api/grading
 router.get('/exams/:exam_id/answers', verifyToken, isDosen, gradingController.getAnswersToGrade);
+router.get('/exams/:exam_id/all-answers', verifyToken, isDosen, gradingController.getAllAnswers);
+router.get('/exams/:exam_id/students/:student_id/answers', verifyToken, isDosen, gradingController.getStudentAnswers);
 router.put('/responses/:response_id/score', verifyToken, isDosen, gradingController.submitScore);
 
 module.exports = router;
