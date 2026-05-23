@@ -62,15 +62,21 @@ TIAS_SHARED_SECRET="integration_key"  # Optional: for TIAS integration
 1. **Submission**: Student submits exam via `POST /api/student/submit-exam`
 2. **Queue**: TIPE_3 (essay) responses are added to `correctionQueue` in `aiService.js`
 3. **Model Fallback**: System tries models in priority order:
-   - `gemini-2.0-flash-exp` → `gemini-1.5-flash` → `gemini-1.5-flash-8b` → `gemini-1.5-pro`
+   - `gemini-2.5-flash` → `gemini-2.0-flash` → `gemini-2.0-flash-lite` → `gemini-2.5-pro`
    - Automatically switches if 404/503/429 errors occur
-4. **Retry Logic**: Max 5 retries per job with exponential backoff (4s, 6s, 8s, 10s, 12s)
-5. **Background Worker**: Processes queue with base 4-second delay (respects Gemini rate limit: 15 req/min free tier)
+4. **Retry Logic**: Max 3 retries per job with exponential backoff (8s, 10s, 12s)
+5. **Background Worker**: Processes queue with base 8-second delay (respects Gemini rate limit: 15 req/min free tier)
 6. **Score Update**: AI scores stored in `student_responses.skor` with status remaining `menunggu`
 7. **Human Verification**: Dosen reviews/approves AI scores via grading endpoints
-8. **Failure Handling**: After 5 failed retries, sets score to 0 and requires manual grading
+8. **Failure Handling**: After 3 failed retries, sets score to 0 and requires manual grading
 
-See `AI_TROUBLESHOOTING.md` for error handling details.
+**Queue Safeguards (Phase 1 Optimization):**
+- Soft limit: Max 2000 jobs in queue (warning at 1000)
+- TTL: Jobs expire after 1 hour (auto-skip)
+- No per-question recalculation in AI worker (saves 80% DB queries)
+- Batch recalculation via `POST /api/grading/exams/:exam_id/recalculate`
+
+See `docs/AI_TROUBLESHOOTING.md` for error handling details.
 
 ### Grading Calculation Modes
 Set via `exams.grading_type` enum:

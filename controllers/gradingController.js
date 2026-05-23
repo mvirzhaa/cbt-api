@@ -240,3 +240,80 @@ exports.submitScore = async (req, res) => {
         res.status(200).json({ message: "Nilai berhasil disimpan!" });
     } catch (error) { res.status(500).json({ message: "Gagal menyimpan nilai." }); }
 };
+
+/**
+ * BATCH RECALCULATION ENDPOINT
+ * Trigger manual oleh dosen setelah verifikasi AI scores
+ * Menggantikan per-soal recalculation di AI worker
+ */
+exports.recalculateExamScores = async (req, res) => {
+    try {
+        const examId = toPositiveInt(req.params.exam_id);
+        if (!examId) return res.status(400).json({ message: "ID ujian tidak valid." });
+
+        const examCheck = await prisma.exams.findUnique({ where: { id: examId } });
+        if (!examCheck || examCheck.kode_dosen !== req.user.id.toString()) {
+            return res.status(403).json({ message: "Akses Ditolak!" });
+        }
+
+        // Get all attempts for this exam
+        const attempts = await prisma.exam_attempts.findMany({
+            where: { exam_id: examId }
+        });
+
+        let updatedCount = 0;
+
+        for (const attempt of attempts) {
+            // Get all responses for this student + exam
+            const allResponses = await prisma.student_responses.findMany({
+                where: { user_id: attempt.user_id, exam_id: examId },
+                include: { questions: { select: { tipe_soal: true, bobot_nilai: true } } }
+            });
+
+            let gradedBobotPilgan = 0, totalNilaiPilganBerbobot = 0;
+            let gradedBobotEsai = 0, totalNilaiEsaiBerbobot = 0;
+            let gradedBobotFile = 0, totalNilaiFileBerbobot = 0;
+
+            allResponses.forEach(r => {
+                const bobot = parseFloat(r.questions.bobot_nilai || 10);
+                const skor = r.skor !== null ? parseFloat(r.skor || 0) : null;
+
+                if (r.questions.tipe_soal === 'TIPE_1' || r.questions.tipe_soal === 'TIPE_2') {
+                    if (skor !== null) {
+                        gradedBobotPilgan += bobot;
+                        totalNilaiPilganBerbobot += (skor * bobot);
+                    }
+                } else if (r.questions.tipe_soal === 'TIPE_3') {
+                    if (skor !== null) {
+                        gradedBobotEsai += bobot;
+                        totalNilaiEsaiBerbobot += (skor * bobot);
+                    }
+                } else if (r.questions.tipe_soal === 'TIPE_4') {
+                    if (skor !== null) {
+                        gradedBobotFile += bobot;
+                        totalNilaiFileBerbobot += (skor * bobot);
+                    }
+                }
+            });
+
+            const skor_pilgan_100 = gradedBobotPilgan > 0 ? Math.round(totalNilaiPilganBerbobot / gradedBobotPilgan) : 0;
+            const skor_esai_100 = gradedBobotEsai > 0 ? Math.round(totalNilaiEsaiBerbobot / gradedBobotEsai) : 0;
+            const skor_file_100 = gradedBobotFile > 0 ? Math.round(totalNilaiFileBerbobot / gradedBobotFile) : 0;
+
+            await prisma.exam_attempts.update({
+                where: { id: attempt.id },
+                data: { skor_pilgan_100, skor_esai_100, skor_file_100 }
+            });
+
+            updatedCount++;
+        }
+
+        res.status(200).json({
+            message: `Berhasil recalculate skor untuk ${updatedCount} mahasiswa.`,
+            updatedCount
+        });
+    } catch (error) {
+        console.error("❌ ERROR RECALCULATE:", error);
+        res.status(500).json({ message: "Gagal recalculate skor." });
+    }
+};

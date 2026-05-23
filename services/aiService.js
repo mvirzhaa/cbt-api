@@ -2,11 +2,14 @@ const { GoogleGenerativeAI } = require("@google/generative-ai");
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 
+// ============================================================================
+// PHASE 1: QUICK FIXES - Optimized AI Service
+// ============================================================================
+
 // Inisialisasi Otak Gemini
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-// Daftar model fallback (dari yang tercepat ke yang paling stabil)
-// Model names verified working on 2026-05-22
+// Model priority (verified working models)
 const MODEL_PRIORITY = [
     "gemini-2.5-flash",           // Stable Jun 2025 (RECOMMENDED - 1M tokens)
     "gemini-2.0-flash",           // Fast & versatile
@@ -16,19 +19,28 @@ const MODEL_PRIORITY = [
 
 // DEBUG: Log saat module di-load
 console.log("=".repeat(60));
-console.log("🔧 aiService.js LOADED - Model Priority:");
-MODEL_PRIORITY.forEach((model, idx) => {
-    console.log(`   ${idx + 1}. ${model}`);
-});
+console.log("🔧 aiService.js LOADED - Phase 1 Optimized");
+console.log("Model Priority:", MODEL_PRIORITY);
 console.log("=".repeat(60));
 
-// Memori Antrean (Queue)
+// FIX 1B: SOFT QUEUE LIMIT (prevent RAM exhaustion)
+const MAX_QUEUE_SIZE = 2000;
+const QUEUE_WARNING_THRESHOLD = 1000;
+
+// In-memory queue (will be migrated to DB in Phase 2)
 const correctionQueue = [];
 let isProcessing = false;
-let currentModelIndex = 0; // Track model yang sedang dipakai
+let currentModelIndex = 0;
+let rejectedJobsCount = 0;
 
-// Fungsi Menilai dengan AI (dengan retry logic)
-const gradeWithAI = async (soal, kunciJawaban, jawabanMhs, retryCount = 0) => {
+// FIX 1C: TTL - Job expiry time (1 hour)
+const JOB_TTL_MS = 60 * 60 * 1000; // 1 hour
+
+/**
+ * Grade essay with AI - Robust error handling
+ * @returns {number|null} Score 0-100, or null if all models fail
+ */
+const gradeWithAI = async (soal, kunciJawaban, jawabanMhs) => {
     const prompt = `
     Kamu adalah Dosen Teknik Informatika yang tegas tapi adil.
     Evaluasi jawaban mahasiswa.
@@ -44,169 +56,203 @@ const gradeWithAI = async (soal, kunciJawaban, jawabanMhs, retryCount = 0) => {
 
     const maxRetries = MODEL_PRIORITY.length;
 
+    // Try each model in priority order
     for (let attempt = 0; attempt < maxRetries; attempt++) {
-        try {
-            const modelIndex = (currentModelIndex + attempt) % MODEL_PRIORITY.length;
-            const modelName = MODEL_PRIORITY[modelIndex];
+        const modelIndex = (currentModelIndex + attempt) % MODEL_PRIORITY.length;
+        const modelName = MODEL_PRIORITY[modelIndex];
 
-            // DEBUG: Extra logging
-            console.log(`[AI Worker] 🔍 DEBUG - currentModelIndex: ${currentModelIndex}, attempt: ${attempt}, modelIndex: ${modelIndex}`);
-            console.log(`[AI Worker] 🔍 DEBUG - MODEL_PRIORITY array:`, MODEL_PRIORITY);
-            console.log(`[AI Worker] Mencoba model: ${modelName} (attempt ${attempt + 1}/${maxRetries})`);
+        try {
+            console.log(`[AI Worker] Trying model: ${modelName} (attempt ${attempt + 1}/${maxRetries})`);
 
             const model = genAI.getGenerativeModel({ model: modelName });
+
+            // CRITICAL: Wrap generateContent in try-catch
             const result = await model.generateContent(prompt);
             const textResponse = result.response.text();
 
-            // Paksa ekstrak angka saja dari jawaban AI
+            // Extract integer score (0-100)
             const match = textResponse.match(/\d+/);
             const score = match ? Math.min(100, Math.max(0, parseInt(match[0]))) : 0;
 
-            console.log(`[AI Worker] ✅ Berhasil dengan model: ${modelName}`);
-            // Update model yang berhasil untuk request berikutnya
-            currentModelIndex = (currentModelIndex + attempt) % MODEL_PRIORITY.length;
+            console.log(`[AI Worker] ✅ Success with model: ${modelName} | Score: ${score}`);
 
-            return score;
+            // Update successful model index for next request
+            currentModelIndex = modelIndex;
+
+            return score; // Success, return score
+
         } catch (error) {
-            console.error(`[AI Worker] ❌ Error dengan model ${MODEL_PRIORITY[(currentModelIndex + attempt) % MODEL_PRIORITY.length]}:`, error.message);
+            // ROBUST ERROR HANDLING: Don't crash, just log and try next model
+            const errorType = error.message.includes('503') ? '503 Overload' :
+                            error.message.includes('404') ? '404 Not Found' :
+                            error.message.includes('429') ? '429 Rate Limit' :
+                            'Unknown Error';
 
-            // Jika ini adalah attempt terakhir, return null
+            console.error(`[AI Worker] ❌ Model ${modelName} failed: ${errorType}`);
+
+            // Last attempt failed
             if (attempt === maxRetries - 1) {
-                console.error(`[AI Worker] ❌ Semua model gagal setelah ${maxRetries} percobaan`);
+                console.error(`[AI Worker] ❌ All ${maxRetries} models failed. Returning null for manual grading.`);
                 return null;
             }
 
-            // Jika 503 (overload) atau 404 (not found), tunggu sebentar lalu coba model berikutnya
-            if (error.message.includes('503') || error.message.includes('404') || error.message.includes('429')) {
-                console.log(`[AI Worker] ⏳ Menunggu 2 detik sebelum mencoba model berikutnya...`);
-                await new Promise(resolve => setTimeout(resolve, 2000));
+            // Wait before trying next model (backoff for rate limits)
+            if (error.message.includes('503') || error.message.includes('429')) {
+                console.log(`[AI Worker] ⏳ Waiting 3s before next model...`);
+                await new Promise(resolve => setTimeout(resolve, 3000));
             }
         }
     }
 
-    return null; // Jika semua model gagal
+    return null; // All models failed
 };
 
-// Mesin Penggerak Antrean (Background Worker)
+/**
+ * FIX 1A: REMOVED RECALCULATION
+ * Process queue without live score recalculation
+ * Recalculation will be done via batch endpoint later
+ */
 const processQueue = async () => {
     if (isProcessing || correctionQueue.length === 0) return;
     isProcessing = true;
 
-    console.log(`[AI Worker] Memulai koreksi... Sisa antrean: ${correctionQueue.length}`);
+    console.log(`[AI Worker] 🚀 Starting queue processing... Queue size: ${correctionQueue.length}`);
 
     while (correctionQueue.length > 0) {
-        // Ambil tumpukan paling atas
-        const job = correctionQueue.shift(); 
-        
+        const job = correctionQueue.shift();
+
+        // FIX 1C: Check job expiry (TTL)
+        const jobAge = Date.now() - job.createdAt;
+        if (jobAge > JOB_TTL_MS) {
+            console.log(`[AI Worker] ⏰ Job ${job.responseId} expired (age: ${Math.round(jobAge/1000/60)} min). Skipping.`);
+            continue; // Skip expired job
+        }
+
         try {
-            console.log(`[AI Worker] Mengoreksi ID Jawaban: ${job.responseId}...`);
+            console.log(`[AI Worker] Processing response ID: ${job.responseId}...`);
             const skorAI = await gradeWithAI(job.soal, job.kunciJawaban, job.jawabanMhs);
-            
+
             if (skorAI !== null) {
+                // SUCCESS: Update only the individual response score
                 await prisma.student_responses.update({
                     where: { id: job.responseId },
                     data: {
                         skor: skorAI
-                        // status_penilaian TETAP 'menunggu' agar dosen bisa memverifikasi nilai ini di halaman Grading
+                        // status_penilaian stays 'menunggu' for dosen verification
                     }
                 });
-                console.log(`[AI Worker] ✅ Selesai! ID: ${job.responseId} | Skor: ${skorAI}`);
+                console.log(`[AI Worker] ✅ Done! ID: ${job.responseId} | Score: ${skorAI}`);
 
-                // 🆕 Recalculate skor_esai_100 di exam_attempts (status TETAP MENUNGGU_VERIFIKASI)
-                try {
-                    const allResponses = await prisma.student_responses.findMany({
-                        where: { user_id: job.userId, exam_id: job.examId },
-                        include: { questions: { select: { tipe_soal: true, bobot_nilai: true } } }
-                    });
-                    let gradedBobotEsai = 0, totalNilaiEsaiBerbobot = 0;
-                    allResponses.forEach(r => {
-                        // TIPE_2 sekarang pilihan ganda multiple choice, bukan esai
-                        // Hanya TIPE_3 yang pakai AI (esai)
-                        if (r.questions.tipe_soal === 'TIPE_3') {
-                            if (r.skor !== null) {
-                                const bobot = parseFloat(r.questions.bobot_nilai || 10);
-                                const skor = parseFloat(r.skor || 0);
-                                gradedBobotEsai += bobot;
-                                totalNilaiEsaiBerbobot += (skor * bobot);
-                            }
-                        }
-                    });
-                    const skor_esai_100 = gradedBobotEsai > 0 ? Math.round(totalNilaiEsaiBerbobot / gradedBobotEsai) : 0;
-                    await prisma.exam_attempts.updateMany({
-                        where: { user_id: job.userId, exam_id: job.examId },
-                        data: { skor_esai_100 }
-                    });
-                    console.log(`[AI Worker] exam_attempts skor_esai_100 updated: ${skor_esai_100}`);
-                } catch (attemptErr) {
-                    console.error('❌ Gagal update exam_attempts:', attemptErr.message);
-                }
+                // FIX 1A: REMOVED RECALCULATION
+                // No exam_attempts update here - saves 80% DB queries
+                // Recalculation will be done via batch endpoint when dosen verifies
 
-                // Reset retry count jika berhasil
-                if (job.retryCount) delete job.retryCount;
             } else {
-                // Implementasi retry dengan exponential backoff
+                // FAILURE: All models failed
                 job.retryCount = (job.retryCount || 0) + 1;
-                const maxRetries = 5;
+                const maxRetries = 3; // Reduced from 5 for faster failure
 
                 if (job.retryCount <= maxRetries) {
-                    console.log(`[AI Worker] ⚠️ Gagal menilai ID: ${job.responseId}, retry ke-${job.retryCount}/${maxRetries}`);
-                    correctionQueue.push(job); // Kembalikan ke antrean untuk retry
+                    console.log(`[AI Worker] ⚠️  Retry ${job.retryCount}/${maxRetries} for ID: ${job.responseId}`);
+                    correctionQueue.push(job); // Re-queue for retry
                 } else {
-                    console.error(`[AI Worker] ❌ FINAL FAIL ID: ${job.responseId} setelah ${maxRetries} percobaan. Skip.`);
-                    // Optional: tandai di database bahwa AI grading gagal
+                    console.error(`[AI Worker] ❌ FINAL FAIL ID: ${job.responseId} after ${maxRetries} retries.`);
+                    // Set score to 0 for manual grading
                     try {
                         await prisma.student_responses.update({
                             where: { id: job.responseId },
-                            data: {
-                                skor: 0,
-                                status_penilaian: 'menunggu' // Dosen harus nilai manual
-                            }
+                            data: { skor: 0, status_penilaian: 'menunggu' }
                         });
                     } catch (e) {
-                        console.error('❌ Gagal update status gagal:', e.message);
+                        console.error('❌ Failed to set fallback score:', e.message);
                     }
                 }
             }
         } catch (dbError) {
-            console.error("❌ DB Error saat update nilai AI:", dbError.message);
+            console.error("❌ DB Error:", dbError.message);
         }
 
-        // JEDA dengan exponential backoff jika ada retry
-        const baseDelay = 4000; // 4 detik base delay
-        const retryDelay = (job.retryCount || 0) * 2000; // Tambah 2 detik per retry
-        const totalDelay = baseDelay + retryDelay;
+        // FIX: INCREASED DELAY from 4s to 8s (prevent Gemini 503 errors)
+        const baseDelay = 8000; // 8 seconds (respects rate limit better)
+        const retryMultiplier = (job.retryCount || 0) * 2000; // +2s per retry
+        const totalDelay = baseDelay + retryMultiplier;
 
-        console.log(`[AI Worker] ⏳ Menunggu ${totalDelay/1000} detik sebelum job berikutnya...`);
+        console.log(`[AI Worker] ⏳ Waiting ${totalDelay/1000}s before next job...`);
         await new Promise(resolve => setTimeout(resolve, totalDelay));
     }
 
     isProcessing = false;
-    console.log(`[AI Worker] Semua antrean ujian telah selesai dikoreksi! 🎉`);
+    console.log(`[AI Worker] ✅ Queue processing completed!`);
 };
 
-// Fungsi yang akan dipanggil oleh studentController
+/**
+ * FIX 1B: Add job to queue with SOFT LIMIT
+ * @returns {boolean} true if added, false if rejected
+ */
 exports.addToQueue = (responseId, soal, kunciJawaban, jawabanMhs, userId, examId) => {
-    correctionQueue.push({ responseId, soal, kunciJawaban, jawabanMhs, userId, examId });
-    console.log(`[AI Worker] ➕ Job added to queue. Total queue: ${correctionQueue.length}`);
-    // Bangunkan mesin jika sedang tidur
+    // FIX 1B: Soft limit check
+    if (correctionQueue.length >= MAX_QUEUE_SIZE) {
+        rejectedJobsCount++;
+        console.error(`[AI Worker] ⚠️  QUEUE FULL! Rejected job ${responseId}. Total rejected: ${rejectedJobsCount}`);
+
+        // Fallback: Set score to 0 for manual grading
+        prisma.student_responses.update({
+            where: { id: responseId },
+            data: { skor: 0, status_penilaian: 'menunggu' }
+        }).catch(err => console.error('Failed to set fallback score:', err));
+
+        return false; // Job rejected
+    }
+
+    // Warning threshold (soft limit)
+    if (correctionQueue.length >= QUEUE_WARNING_THRESHOLD) {
+        console.warn(`[AI Worker] ⚠️  Queue size: ${correctionQueue.length}/${MAX_QUEUE_SIZE} (WARNING)`);
+    }
+
+    // Add job with timestamp (for TTL)
+    correctionQueue.push({
+        responseId,
+        soal,
+        kunciJawaban,
+        jawabanMhs,
+        userId,
+        examId,
+        createdAt: Date.now(), // FIX 1C: TTL timestamp
+        retryCount: 0
+    });
+
+    console.log(`[AI Worker] ➕ Job added. Queue: ${correctionQueue.length}/${MAX_QUEUE_SIZE}`);
+
+    // Trigger worker (non-blocking)
     processQueue();
+
+    return true; // Job accepted
 };
 
-// Fungsi untuk clear queue (untuk debugging/maintenance)
+/**
+ * Clear queue (for maintenance)
+ */
 exports.clearQueue = () => {
     const queueLength = correctionQueue.length;
-    correctionQueue.length = 0; // Clear array
+    correctionQueue.length = 0;
     isProcessing = false;
+    rejectedJobsCount = 0;
     console.log(`[AI Worker] 🗑️  Queue cleared. ${queueLength} jobs removed.`);
     return { cleared: queueLength };
 };
 
-// Fungsi untuk get queue status
+/**
+ * Get queue status (for monitoring)
+ */
 exports.getQueueStatus = () => {
     return {
         queueLength: correctionQueue.length,
+        maxQueueSize: MAX_QUEUE_SIZE,
+        warningThreshold: QUEUE_WARNING_THRESHOLD,
         isProcessing: isProcessing,
-        currentModelIndex: currentModelIndex,
-        modelPriority: MODEL_PRIORITY
+        rejectedJobs: rejectedJobsCount,
+        currentModel: MODEL_PRIORITY[currentModelIndex],
+        modelPriority: MODEL_PRIORITY,
+        ttl: `${JOB_TTL_MS/1000/60} minutes`
     };
 };

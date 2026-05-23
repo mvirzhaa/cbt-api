@@ -10,6 +10,9 @@ router.get('/exams/:exam_id/all-answers', verifyToken, isDosen, gradingControlle
 router.get('/exams/:exam_id/students/:student_id/answers', verifyToken, isDosen, gradingController.getStudentAnswers);
 router.put('/responses/:response_id/score', verifyToken, isDosen, gradingController.submitScore);
 
+// Batch Recalculation (Dosen trigger manually after verifying AI scores)
+router.post('/exams/:exam_id/recalculate', verifyToken, isDosen, gradingController.recalculateExamScores);
+
 // AI Queue Management (Admin/Dosen only)
 router.get('/ai-queue/status', verifyToken, (req, res) => {
     try {

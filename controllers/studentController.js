@@ -188,31 +188,43 @@ exports.submitExam = async (req, res) => {
         });
         const skor_pilgan_100 = maxPilgan > 0 ? Math.round((rawPilgan / maxPilgan) * 100) : 0;
 
-        // 3. Buat/update record exam_attempts dengan status MENUNGGU_VERIFIKASI
+        // 3. FIX 1A: Buat/update record exam_attempts dengan status MENUNGGU_VERIFIKASI
+        // REMOVED: final_score calculation - will be done via batch endpoint
         await prisma.exam_attempts.upsert({
             where: { user_id_exam_id: { user_id, exam_id: parseInt(exam_id) } },
             create: {
-                user_id, exam_id: parseInt(exam_id),
-                skor_pilgan_100, skor_esai_100: 0, skor_file_100: 0,
-                status: 'MENUNGGU_VERIFIKASI'
+                user_id,
+                exam_id: parseInt(exam_id),
+                skor_pilgan_100, // Only multiple choice scores (auto-graded)
+                skor_esai_100: 0, // Will be calculated later via batch endpoint
+                skor_file_100: 0, // Will be manually graded by dosen
+                status: 'MENUNGGU_VERIFIKASI', // Human-in-the-Loop: awaiting dosen verification
+                submitted_at: new Date()
             },
             update: {
-                skor_pilgan_100, skor_esai_100: 0, skor_file_100: 0,
-                status: 'MENUNGGU_VERIFIKASI', submitted_at: new Date()
+                skor_pilgan_100,
+                skor_esai_100: 0,
+                skor_file_100: 0,
+                status: 'MENUNGGU_VERIFIKASI',
+                submitted_at: new Date()
             }
         });
 
-        // 4. 🤖 EKSEKUSI AI QUEUE untuk soal esai
+        // 4. 🤖 PHASE 1 OPTIMIZED: AI Queue for Essay Grading
+        // FIX 1B: Soft limit handled in aiService.addToQueue()
         if (antreanEsaiAI.length > 0) {
             const savedResponses = await prisma.student_responses.findMany({
                 where: { user_id: user_id, exam_id: parseInt(exam_id) }
             });
 
+            let queuedCount = 0;
+            let rejectedCount = 0;
+
             antreanEsaiAI.forEach(esai => {
                 const dbRecord = savedResponses.find(r => r.question_id === esai.question_id);
                 if (dbRecord) {
-                    // Kirim juga user_id & exam_id agar worker bisa update exam_attempts
-                    aiService.addToQueue(
+                    // Add to queue (non-blocking, async processing)
+                    const added = aiService.addToQueue(
                         dbRecord.id,
                         esai.soalTeks,
                         esai.kunciJawaban,
@@ -220,13 +232,26 @@ exports.submitExam = async (req, res) => {
                         user_id,
                         parseInt(exam_id)
                     );
+
+                    if (added) {
+                        queuedCount++;
+                    } else {
+                        rejectedCount++;
+                    }
                 }
             });
+
+            console.log(`[Submit Exam] AI Queue: ${queuedCount} queued, ${rejectedCount} rejected (queue full)`);
         }
 
+        // CRITICAL: Return response immediately (don't await AI processing)
+        // AI grading happens in background, dosen will verify later
         res.status(200).json({
             message: "Ujian berhasil dikumpulkan! Nilai Anda sedang menunggu verifikasi dosen.",
-            status: "MENUNGGU_VERIFIKASI"
+            status: "MENUNGGU_VERIFIKASI",
+            note: antreanEsaiAI.length > 0
+                ? "Soal esai sedang diproses AI. Dosen akan memverifikasi hasilnya."
+                : null
         });
     } catch (error) { 
         console.error("❌ ERROR SUBMIT:", error);
