@@ -18,6 +18,12 @@ exports.verifyToken = (req, res, next) => {
     try {
         // Cek keaslian token
         const decoded = jwt.verify(token, JWT_SECRET);
+        // Standardize user ID field between regular login and TIAS SSO login
+        if (decoded.userId && !decoded.id) {
+            decoded.id = decoded.userId;
+        } else if (decoded.id && !decoded.userId) {
+            decoded.userId = decoded.id;
+        }
         req.user = decoded; // Simpan data user (id, role) ke dalam request
         next(); // Lanjut ke proses berikutnya
     } catch (error) {
