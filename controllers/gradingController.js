@@ -107,7 +107,7 @@ exports.getAllAnswers = async (req, res) => {
         const answers = await prisma.student_responses.findMany({
             where: { exam_id: examId },
             include: {
-                users: { select: { nama: true, nim: true, username: true } },
+                users: { select: { nama: true, nim: true } },
                 questions: {
                     select: {
                         isi_soal: true,
@@ -151,7 +151,7 @@ exports.getStudentAnswers = async (req, res) => {
                 user_id: studentId
             },
             include: {
-                users: { select: { nama: true, nim: true, username: true } },
+                users: { select: { nama: true, nim: true } },
                 questions: {
                     select: {
                         isi_soal: true,
