@@ -113,8 +113,13 @@ exports.getAllAnswers = async (req, res) => {
                         isi_soal: true,
                         tipe_soal: true,
                         kunci_jawaban: true,
-                        opsi_jawaban: true,
-                        bobot_nilai: true
+                        bobot_nilai: true,
+                        question_options: {
+                            select: {
+                                label_pilihan: true,
+                                teks_pilihan: true
+                            }
+                        }
                     }
                 }
             },
@@ -123,7 +128,31 @@ exports.getAllAnswers = async (req, res) => {
                 { question_id: 'asc' }
             ]
         });
-        res.status(200).json({ data: answers });
+
+        // Format jawaban agar properti questions memiliki opsi_jawaban berupa string JSON object
+        const formattedAnswers = answers.map(ans => {
+            const question = ans.questions;
+            let opsi_jawaban = null;
+            if (question && question.question_options && question.question_options.length > 0) {
+                const opsiObj = {};
+                question.question_options.forEach(opt => {
+                    opsiObj[opt.label_pilihan] = opt.teks_pilihan;
+                });
+                opsi_jawaban = JSON.stringify(opsiObj);
+            }
+            
+            const { question_options, ...restQuestion } = question;
+            
+            return {
+                ...ans,
+                questions: {
+                    ...restQuestion,
+                    opsi_jawaban
+                }
+            };
+        });
+
+        res.status(200).json({ data: formattedAnswers });
     } catch (error) {
         console.error("❌ ERROR GET ALL ANSWERS:", error);
         res.status(500).json({ message: "Gagal mengambil data jawaban." });
@@ -157,14 +186,43 @@ exports.getStudentAnswers = async (req, res) => {
                         isi_soal: true,
                         tipe_soal: true,
                         kunci_jawaban: true,
-                        opsi_jawaban: true,
-                        bobot_nilai: true
+                        bobot_nilai: true,
+                        question_options: {
+                            select: {
+                                label_pilihan: true,
+                                teks_pilihan: true
+                            }
+                        }
                     }
                 }
             },
             orderBy: { question_id: 'asc' }
         });
-        res.status(200).json({ data: answers });
+
+        // Format jawaban agar properti questions memiliki opsi_jawaban berupa string JSON object
+        const formattedAnswers = answers.map(ans => {
+            const question = ans.questions;
+            let opsi_jawaban = null;
+            if (question && question.question_options && question.question_options.length > 0) {
+                const opsiObj = {};
+                question.question_options.forEach(opt => {
+                    opsiObj[opt.label_pilihan] = opt.teks_pilihan;
+                });
+                opsi_jawaban = JSON.stringify(opsiObj);
+            }
+            
+            const { question_options, ...restQuestion } = question;
+            
+            return {
+                ...ans,
+                questions: {
+                    ...restQuestion,
+                    opsi_jawaban
+                }
+            };
+        });
+
+        res.status(200).json({ data: formattedAnswers });
     } catch (error) {
         console.error("❌ ERROR GET STUDENT ANSWERS:", error);
         res.status(500).json({ message: "Gagal mengambil data jawaban mahasiswa." });
