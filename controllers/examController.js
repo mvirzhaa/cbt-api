@@ -7,7 +7,7 @@ exports.getAllExams = async (req, res) => {
     try {
         const exams = await prisma.exams.findMany({
             where: req.user.role === 'super_admin' ? {} : { kode_dosen: req.user.id.toString() },
-            include: { mata_kuliah: true }, orderBy: { waktu_mulai: 'desc' }
+            include: { mata_kuliah: true, exam_terms: { orderBy: { urutan: 'asc' } } }, orderBy: { waktu_mulai: 'desc' }
         });
         res.status(200).json({ data: exams });
     } catch (error) { res.status(500).json({ message: "Gagal mengambil data ujian." }); }
@@ -16,7 +16,7 @@ exports.getAllExams = async (req, res) => {
 // 2. Terbitkan Ujian Baru
 exports.createExam = async (req, res) => {
     try {
-        const { kode_mk, nama_ujian, waktu_mulai, waktu_selesai, durasi, bobot_pilgan, bobot_esai, bobot_upload } = req.body;
+        const { kode_mk, nama_ujian, waktu_mulai, waktu_selesai, durasi, bobot_pilgan, bobot_esai, bobot_upload, exam_terms } = req.body;
         const rawUserId = req.user && req.user.id;
         const durasiInt = toPositiveInt(durasi);
         const waktuMulaiDate = toValidDate(waktu_mulai);
@@ -30,15 +30,21 @@ exports.createExam = async (req, res) => {
 
         const token_ujian = Math.random().toString(36).substring(2, 8).toUpperCase();
         
-        const newExam = await prisma.exams.create({
-            data: {
-                kode_mk, kode_dosen: rawUserId.toString(), nama_ujian, token_ujian,
-                waktu_mulai: waktuMulaiDate, waktu_selesai: waktuSelesaiDate, durasi: durasiInt,
-                bobot_pilgan: parseInt(bobot_pilgan) || 0,
-                bobot_esai: parseInt(bobot_esai) || 0,
-                bobot_upload: parseInt(bobot_upload) || 0
-            }
-        });
+        const dataPayload = {
+            kode_mk, kode_dosen: rawUserId.toString(), nama_ujian, token_ujian,
+            waktu_mulai: waktuMulaiDate, waktu_selesai: waktuSelesaiDate, durasi: durasiInt,
+            bobot_pilgan: parseInt(bobot_pilgan) || 0,
+            bobot_esai: parseInt(bobot_esai) || 0,
+            bobot_upload: parseInt(bobot_upload) || 0
+        };
+
+        if (Array.isArray(exam_terms) && exam_terms.length > 0) {
+            dataPayload.exam_terms = {
+                create: exam_terms.map((term, index) => ({ isi_syarat: term, urutan: index }))
+            };
+        }
+
+        const newExam = await prisma.exams.create({ data: dataPayload });
         res.status(201).json({ message: "Ujian berhasil diterbitkan!", data: newExam });
     } catch (error) { res.status(500).json({ message: "Gagal menerbitkan ujian." }); }
 };
@@ -49,7 +55,7 @@ exports.updateExam = async (req, res) => {
         const id = parseInt(req.params.id);
         if (!id) return res.status(400).json({ message: "ID ujian tidak valid." });
 
-        const { kode_mk, nama_ujian, waktu_mulai, waktu_selesai, durasi, bobot_pilgan, bobot_esai, bobot_upload } = req.body;
+        const { kode_mk, nama_ujian, waktu_mulai, waktu_selesai, durasi, bobot_pilgan, bobot_esai, bobot_upload, exam_terms } = req.body;
 
         const waktuMulaiDate = new Date(waktu_mulai);
         const waktuSelesaiDate = new Date(waktu_selesai);
@@ -67,18 +73,27 @@ exports.updateExam = async (req, res) => {
             return res.status(403).json({ message: "Anda tidak berhak mengedit ujian ini." });
         }
 
+        const updatePayload = {
+            kode_mk: kode_mk,
+            nama_ujian: nama_ujian,
+            waktu_mulai: waktuMulaiDate,
+            waktu_selesai: waktuSelesaiDate,
+            durasi: parseInt(durasi) || 90,
+            bobot_pilgan: parseInt(bobot_pilgan) || 0,
+            bobot_esai: parseInt(bobot_esai) || 0,
+            bobot_upload: parseInt(bobot_upload) || 0
+        };
+
+        if (Array.isArray(exam_terms)) {
+            updatePayload.exam_terms = {
+                deleteMany: {},
+                create: exam_terms.map((term, index) => ({ isi_syarat: term, urutan: index }))
+            };
+        }
+
         const updatedExam = await prisma.exams.update({
             where: { id },
-            data: {
-                kode_mk: kode_mk,
-                nama_ujian: nama_ujian,
-                waktu_mulai: waktuMulaiDate,
-                waktu_selesai: waktuSelesaiDate,
-                durasi: parseInt(durasi) || 90,
-                bobot_pilgan: parseInt(bobot_pilgan) || 0,
-                bobot_esai: parseInt(bobot_esai) || 0,
-                bobot_upload: parseInt(bobot_upload) || 0
-            }
+            data: updatePayload
         });
 
         res.status(200).json({ message: "Ujian berhasil diperbarui!", data: updatedExam });

@@ -12,7 +12,11 @@ exports.verifyToken = async (req, res) => {
 
         const exam = await prisma.exams.findUnique({
             where: { token_ujian: token.toUpperCase() }, 
-            include: { mata_kuliah: true, questions: { include: { question_options: true } } }
+            include: { 
+                mata_kuliah: true, 
+                questions: { include: { question_options: true } },
+                exam_terms: { orderBy: { urutan: 'asc' } }
+            }
         });
 
         if (!exam) return res.status(404).json({ message: "Token Ujian tidak ditemukan di database." });
