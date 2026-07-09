@@ -16,7 +16,10 @@ exports.approveUser = async (req, res) => {
 exports.getPendingUsers = async (req, res) => {
     try {
         const pendingUsers = await prisma.users.findMany({
-            where: { status_aktif: false }, orderBy: { created_at: 'desc' }
+            where: { status_aktif: false },
+            orderBy: { created_at: 'desc' },
+            // 🔒 select eksplisit: JANGAN sertakan password (hash bcrypt)
+            select: { id: true, nim: true, nama: true, email: true, role: true, status_aktif: true, created_at: true }
         });
         res.status(200).json({ data: pendingUsers });
     } catch (error) { res.status(500).json({ message: "Gagal mengambil data antrean." }); }
@@ -26,7 +29,10 @@ exports.getPendingUsers = async (req, res) => {
 exports.getActiveUsers = async (req, res) => {
     try {
         const activeUsers = await prisma.users.findMany({
-            where: { status_aktif: true }, orderBy: { role: 'asc' }
+            where: { status_aktif: true },
+            orderBy: { role: 'asc' },
+            // 🔒 select eksplisit: JANGAN sertakan password (hash bcrypt)
+            select: { id: true, nim: true, nama: true, email: true, role: true, status_aktif: true, created_at: true }
         });
         res.status(200).json({ data: activeUsers });
     } catch (error) { res.status(500).json({ message: "Gagal mengambil data pengguna." }); }

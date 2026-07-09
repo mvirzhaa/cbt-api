@@ -117,11 +117,13 @@ exports.getExamRekapDetail = async (req, res) => {
         if (!exam) return res.status(404).json({ message: "Ujian tidak ditemukan." });
         if (exam.kode_dosen !== req.user.id.toString()) return res.status(403).json({ message: "Akses Ditolak!" });
 
+        // 🔧 TIPE_1 & TIPE_2 keduanya pilihan ganda (auto-graded), hanya TIPE_3 yang esai (AI-graded) —
+        // harus konsisten dengan gradingService.calculateFinalScore & gradingController.
         let maxPilgan = 0, maxEsai = 0, maxUpload = 0;
         exam.questions.forEach(q => {
             const bobotSoal = parseFloat(q.bobot_nilai || 10);
-            if (q.tipe_soal === 'TIPE_1') maxPilgan += bobotSoal;
-            else if (q.tipe_soal === 'TIPE_2' || q.tipe_soal === 'TIPE_3') maxEsai += bobotSoal;
+            if (q.tipe_soal === 'TIPE_1' || q.tipe_soal === 'TIPE_2') maxPilgan += bobotSoal;
+            else if (q.tipe_soal === 'TIPE_3') maxEsai += bobotSoal;
             else if (q.tipe_soal === 'TIPE_4') maxUpload += bobotSoal;
         });
 
@@ -145,8 +147,8 @@ exports.getExamRekapDetail = async (req, res) => {
             const tipe = r.questions?.tipe_soal;
             const skor = parseFloat(r.skor || 0);
 
-            if (tipe === 'TIPE_1') studentScores[uid].raw_pilgan += skor;
-            else if (tipe === 'TIPE_2' || tipe === 'TIPE_3') studentScores[uid].raw_esai += skor; 
+            if (tipe === 'TIPE_1' || tipe === 'TIPE_2') studentScores[uid].raw_pilgan += skor;
+            else if (tipe === 'TIPE_3') studentScores[uid].raw_esai += skor;
             else if (tipe === 'TIPE_4') studentScores[uid].raw_upload += skor;
 
             if (r.status_penilaian === 'menunggu') studentScores[uid].status = 'Menunggu Koreksi Dosen';

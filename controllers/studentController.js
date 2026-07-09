@@ -11,10 +11,21 @@ exports.verifyToken = async (req, res) => {
         }
 
         const exam = await prisma.exams.findUnique({
-            where: { token_ujian: token.toUpperCase() }, 
-            include: { 
-                mata_kuliah: true, 
-                questions: { include: { question_options: true } },
+            where: { token_ujian: token.toUpperCase() },
+            include: {
+                mata_kuliah: true,
+                // 🔒 select eksplisit: JANGAN sertakan kunci_jawaban, ini dikirim ke mahasiswa
+                questions: {
+                    select: {
+                        id: true,
+                        exam_id: true,
+                        cpmk: true,
+                        tipe_soal: true,
+                        isi_soal: true,
+                        bobot_nilai: true,
+                        question_options: true
+                    }
+                },
                 exam_terms: { orderBy: { urutan: 'asc' } }
             }
         });
@@ -62,13 +73,28 @@ exports.submitExam = async (req, res) => {
             });
         }
 
-        const user_id = req.user?.userId || req.user?.id || req.userId || 1; 
+        // 🔒 user_id WAJIB berasal dari token JWT — jangan fallback ke user lain, gagal jelas jika hilang
+        const user_id = req.user?.id;
+        if (!user_id) {
+            return res.status(401).json({ message: "Sesi tidak valid. Silakan login ulang." });
+        }
 
-        const questions = await prisma.questions.findMany({ 
-            where: { exam_id: parseInt(exam_id) },
+        const examIdInt = parseInt(exam_id);
+        if (!examIdInt) return res.status(400).json({ message: "exam_id tidak valid." });
+
+        // 🔒 Cegah submit ganda: satu mahasiswa hanya boleh mengumpulkan satu kali per ujian
+        const existingAttempt = await prisma.exam_attempts.findUnique({
+            where: { user_id_exam_id: { user_id, exam_id: examIdInt } }
+        });
+        if (existingAttempt) {
+            return res.status(409).json({ message: "Ujian ini sudah pernah Anda kumpulkan sebelumnya." });
+        }
+
+        const questions = await prisma.questions.findMany({
+            where: { exam_id: examIdInt },
             include: { question_options: true }
         });
-        
+
         if (questions.length === 0) return res.status(404).json({ message: "Soal tidak ditemukan." });
 
         const rekamJawaban = [];
@@ -166,16 +192,13 @@ exports.submitExam = async (req, res) => {
             }
 
             rekamJawaban.push({
-                user_id: user_id, exam_id: parseInt(exam_id), question_id: soal.id,
-                jawaban_teks: jawabanMhs, file_path: pathFile, skor: skorDidapat, status_penilaian: statusNilai 
+                user_id: user_id, exam_id: examIdInt, question_id: soal.id,
+                jawaban_teks: jawabanMhs, file_path: pathFile, skor: skorDidapat, status_penilaian: statusNilai
             });
             totalSkorDiperoleh += (skorDidapat || 0);
         }
 
-        // 1. Simpan semua jawaban ke Database
-        await prisma.student_responses.createMany({ data: rekamJawaban });
-
-        // 2. Hitung skor_pilgan_100 (skala 0-100) dari jawaban yang sudah tersimpan
+        // Hitung skor_pilgan_100 (skala 0-100) dari jawaban yang baru dirakit (in-memory)
         // TIPE_1 dan TIPE_2 sekarang keduanya pilihan ganda (auto-grading)
         let maxPilgan = 0;
         questions.forEach(soal => {
@@ -192,33 +215,37 @@ exports.submitExam = async (req, res) => {
         });
         const skor_pilgan_100 = maxPilgan > 0 ? Math.round((rawPilgan / maxPilgan) * 100) : 0;
 
-        // 3. FIX 1A: Buat/update record exam_attempts dengan status MENUNGGU_VERIFIKASI
-        // REMOVED: final_score calculation - will be done via batch endpoint
-        await prisma.exam_attempts.upsert({
-            where: { user_id_exam_id: { user_id, exam_id: parseInt(exam_id) } },
-            create: {
-                user_id,
-                exam_id: parseInt(exam_id),
-                skor_pilgan_100, // Only multiple choice scores (auto-graded)
-                skor_esai_100: 0, // Will be calculated later via batch endpoint
-                skor_file_100: 0, // Will be manually graded by dosen
-                status: 'MENUNGGU_VERIFIKASI', // Human-in-the-Loop: awaiting dosen verification
-                submitted_at: new Date()
-            },
-            update: {
-                skor_pilgan_100,
-                skor_esai_100: 0,
-                skor_file_100: 0,
-                status: 'MENUNGGU_VERIFIKASI',
-                submitted_at: new Date()
+        // 🔒 Simpan jawaban + buat exam_attempts dalam satu transaksi atomik.
+        // Pakai create (bukan upsert) + skipDuplicates: jika ada request submit ganda yang lolos
+        // race window pengecekan di atas, unique constraint (user_id, exam_id) pada exam_attempts
+        // akan menolaknya dengan P2002 alih-alih diam-diam menimpa/menduplikasi data.
+        try {
+            await prisma.$transaction([
+                prisma.student_responses.createMany({ data: rekamJawaban, skipDuplicates: true }),
+                prisma.exam_attempts.create({
+                    data: {
+                        user_id,
+                        exam_id: examIdInt,
+                        skor_pilgan_100, // Only multiple choice scores (auto-graded)
+                        skor_esai_100: 0, // Will be calculated later via batch endpoint
+                        skor_file_100: 0, // Will be manually graded by dosen
+                        status: 'MENUNGGU_VERIFIKASI', // Human-in-the-Loop: awaiting dosen verification
+                        submitted_at: new Date()
+                    }
+                })
+            ]);
+        } catch (txError) {
+            if (txError.code === 'P2002') {
+                return res.status(409).json({ message: "Ujian ini sudah pernah Anda kumpulkan sebelumnya." });
             }
-        });
+            throw txError;
+        }
 
-        // 4. 🤖 PHASE 1 OPTIMIZED: AI Queue for Essay Grading
+        // 🤖 PHASE 1 OPTIMIZED: AI Queue for Essay Grading
         // FIX 1B: Soft limit handled in aiService.addToQueue()
         if (antreanEsaiAI.length > 0) {
             const savedResponses = await prisma.student_responses.findMany({
-                where: { user_id: user_id, exam_id: parseInt(exam_id) }
+                where: { user_id: user_id, exam_id: examIdInt }
             });
 
             let queuedCount = 0;
@@ -234,7 +261,7 @@ exports.submitExam = async (req, res) => {
                         esai.kunciJawaban,
                         esai.jawabanMhs,
                         user_id,
-                        parseInt(exam_id)
+                        examIdInt
                     );
 
                     if (added) {
@@ -265,7 +292,11 @@ exports.submitExam = async (req, res) => {
 
 exports.getHistory = async (req, res) => {
     try {
-        const user_id = req.user?.userId || req.user?.id || req.userId || 1;
+        // 🔒 user_id WAJIB berasal dari token JWT — jangan fallback ke user lain
+        const user_id = req.user?.id;
+        if (!user_id) {
+            return res.status(401).json({ message: "Sesi tidak valid. Silakan login ulang." });
+        }
 
         // 🆕 Query dari exam_attempts — sumber kebenaran tunggal untuk riwayat
         const attempts = await prisma.exam_attempts.findMany({

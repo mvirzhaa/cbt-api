@@ -37,6 +37,8 @@ JWT_SECRET="your_secure_secret"
 PORT=3000
 GEMINI_API_KEY="your_gemini_api_key"
 TIAS_SHARED_SECRET="integration_key"  # Optional: for TIAS integration
+SIAKAD_API_BASE_URL="https://siakad.example.ac.id"  # Optional: unset = siakadClient runs in stub/simulation mode
+SIAKAD_SHARED_SECRET="integration_key"              # Optional: for SIAKAD push-nilai integration
 ```
 
 ## Core Architecture
@@ -79,11 +81,9 @@ TIAS_SHARED_SECRET="integration_key"  # Optional: for TIAS integration
 See `docs/AI_TROUBLESHOOTING.md` for error handling details.
 
 ### Grading Calculation Modes
-Set via `exams.grading_type` enum:
-- **PER_SOAL**: Direct sum of all scores (default)
-- **PER_KATEGORI**: Weighted percentage calculation using `bobot_pilgan`, `bobot_esai`, `bobot_upload`
-
-Logic handled in `services/gradingService.js:calculateFinalScore()`.
+`exams.grading_type` enum has two values, but **only PER_KATEGORI is actually in effect right now**:
+- **PER_KATEGORI** (currently the only live mode): Weighted percentage using `bobot_pilgan`, `bobot_esai`, `bobot_upload`. `dosenController.verifyExam()` (the endpoint that publishes the official `final_score`) always uses this formula regardless of the stored `grading_type`. `gradingController.getMatakuliahScores()` (the pre-verification rekap preview) force-overrides `grading_type` to `PER_KATEGORI` when calling `gradingService.calculateFinalScore()` for the same reason — so the preview matches what verification will actually publish.
+- **PER_SOAL** (reserved, not reachable): Direct sum of all raw scores. The calculation branch exists in `services/gradingService.js:calculateFinalScore()`, but `grading_type` is never exposed in `createExam`/`updateExam`, so no exam can actually be set to it, and `verifyExam` doesn't branch on it at all. This is reserved for a planned future feature (per-question weighting instead of per-category weighting) — don't wire it up as "direct sum per category" without revisiting `verifyExam` too, or the same preview/official-score mismatch bug will come back.
 
 ### Authentication Flow
 1. Register: `POST /api/register` (creates user with `status_aktif: false`)
@@ -149,6 +149,14 @@ Both AI auto-grading and manual grading update `exam_attempts` table:
 2. Dosen submits score: `PUT /api/grading/responses/:response_id/score`
 3. Status changes from `menunggu` → `selesai`
 4. Triggers recalculation in `exam_attempts`
+
+### SIAKAD Score Push (outbound integration scaffolding)
+- Dosen sets a SIAKAD target once per exam: `PUT /api/siakad/exams/:exam_id/target` (`exams.siakad_kelas_kuliah_id` / `siakad_periode_akademik_id`) — CBT has no kelas/periode concept of its own, so this is manual.
+- Push is only allowed for `exam_attempts.status === 'SELESAI'` (dosen must verify/publish in CBT first): `POST /api/siakad/attempts/:attempt_id/push` (single) or `POST /api/siakad/exams/:exam_id/push` (bulk, all `SELESAI` attempts).
+- `services/siakadQueueService.js` mirrors `aiService.js`'s in-memory queue pattern (FIFO, TTL, retry with backoff, `getQueueStatus()`/`clearQueue()` exposed at `GET/POST /api/siakad/queue/status|clear`).
+- `services/siakadClient.js` is the only file that talks to SIAKAD over HTTP. Without `SIAKAD_API_BASE_URL` set, it runs in **stub/simulation mode** (always succeeds, logs a warning) — fill in the real request/response shape here once SIAKAD's API contract is confirmed.
+- Sync status is tracked per attempt in `exam_attempts.siakad_sync_status` (`BELUM_SINKRON`/`ANTRIAN`/`TERKIRIM`/`GAGAL`) + `siakad_synced_at`/`siakad_error`, surfaced in `RekapNilai.jsx` (frontend) as a badge with a per-row Push/Retry button and a bulk "Push Semua ke SIAKAD" button.
+- Out of scope so far: pulling mata kuliah/kelas/KRS from SIAKAD, NIM/NIDN capture at registration, KRS enrollment validation on exam join. See `prisma/migration_siakad_sync.sql` for the schema this feature depends on (not yet applied to the live DB as of this writing — run it manually once MySQL is reachable, per this project's migration convention).
 
 ## Known Limitations
 

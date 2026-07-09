@@ -47,21 +47,27 @@ exports.getMatakuliahScores = async (req, res) => {
         const finalScores = [];
         for (const key in groupedData) {
             const data = groupedData[key];
-            
-            // 🤖 Panggil Otak AI/Kalkulator Kita
+
+            // 🔧 Rekap ini adalah PREVIEW sebelum dosen verifikasi resmi di dosenController.verifyExam,
+            // yang SELALU memakai rumus persentase berbobot per-kategori (bobot_pilgan/esai/upload).
+            // `grading_type` di DB tidak pernah bisa diset lewat API (selalu default PER_SOAL) dan mode
+            // PER_SOAL murni belum benar-benar dipakai di alur publish nilai — jadi paksa PER_KATEGORI
+            // di sini juga, supaya angka preview konsisten dengan nilai akhir yang akan dipublikasikan.
+            // TODO: saat bobot per-soal individual (bukan per-kategori) diimplementasikan, cabang
+            // grading_type PER_SOAL di gradingService.calculateFinalScore bisa mulai dipakai lagi di sini.
             const gradingResult = gradingService.calculateFinalScore(
                 data.responses,
                 data.questions,
-                data.examConfig
+                { ...data.examConfig, grading_type: 'PER_KATEGORI' }
             );
 
             finalScores.push({
                 nama_mahasiswa: data.nama_mahasiswa,
                 nama_ujian: data.examConfig.nama_ujian,
-                total_skor: gradingResult.totalScore, // Skor akurat sesuai rumus (Mutlak/Persentase)
+                total_skor: gradingResult.totalScore, // Skor akurat sesuai rumus persentase berbobot
                 rincian: gradingResult.breakdown, // Bawa rincian Pilgan/Esai/Upload ke Frontend Web
                 status: gradingResult.isAllGraded ? 'Selesai' : 'Menunggu Koreksi',
-                grading_type: data.examConfig.grading_type
+                grading_type: 'PER_KATEGORI'
             });
         }
 
@@ -233,9 +239,9 @@ exports.submitScore = async (req, res) => {
     try {
         const responseId = toPositiveInt(req.params.response_id);
         const scoreValue = Number.parseFloat(req.body.skor);
-        
-        if (!responseId || !Number.isFinite(scoreValue) || scoreValue < 0) {
-            return res.status(400).json({ message: "Input penilaian tidak valid." });
+
+        if (!responseId || !Number.isFinite(scoreValue) || scoreValue < 0 || scoreValue > 100) {
+            return res.status(400).json({ message: "Skor harus berupa angka antara 0 dan 100." });
         }
         
         const response = await prisma.student_responses.findUnique({
@@ -290,6 +296,15 @@ exports.submitScore = async (req, res) => {
             await prisma.exam_attempts.updateMany({
                 where: { user_id: response.user_id, exam_id: response.exam_id },
                 data: { skor_esai_100, skor_file_100 }
+            });
+
+            // 🔒 Jika attempt ini sudah pernah diverifikasi & dipublish (SELESAI), skor komponennya
+            // baru saja berubah — final_score yang sudah dipublikasikan jadi basi. Kembalikan ke
+            // MENUNGGU_VERIFIKASI supaya mahasiswa tidak melihat nilai akhir yang tidak sinkron lagi,
+            // dan dosen harus sadar & klik "Edit Nilai" untuk publish ulang.
+            await prisma.exam_attempts.updateMany({
+                where: { user_id: response.user_id, exam_id: response.exam_id, status: 'SELESAI' },
+                data: { status: 'MENUNGGU_VERIFIKASI', final_score: null, verified_at: null, verified_by: null }
             });
         } catch (attemptErr) {
             console.error('❌ Gagal update exam_attempts dari manual grading:', attemptErr.message);
@@ -360,7 +375,18 @@ exports.recalculateExamScores = async (req, res) => {
 
             await prisma.exam_attempts.update({
                 where: { id: attempt.id },
-                data: { skor_pilgan_100, skor_esai_100, skor_file_100 }
+                data: {
+                    skor_pilgan_100, skor_esai_100, skor_file_100,
+                    // 🔒 Sama seperti submitScore: kalau attempt ini sudah SELESAI (final_score sudah
+                    // dipublikasikan), komponen skornya baru saja berubah lewat recalculate — jangan
+                    // biarkan final_score lama yang basi tetap tampil ke mahasiswa.
+                    ...(attempt.status === 'SELESAI' && {
+                        status: 'MENUNGGU_VERIFIKASI',
+                        final_score: null,
+                        verified_at: null,
+                        verified_by: null
+                    })
+                }
             });
 
             updatedCount++;

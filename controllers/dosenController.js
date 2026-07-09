@@ -37,7 +37,10 @@ exports.getAttemptsByExam = async (req, res) => {
             final_score: a.final_score !== null ? parseFloat(a.final_score) : null,
             status: a.status,
             submitted_at: a.submitted_at,
-            verified_at: a.verified_at
+            verified_at: a.verified_at,
+            siakad_sync_status: a.siakad_sync_status,
+            siakad_synced_at: a.siakad_synced_at,
+            siakad_error: a.siakad_error
         }));
 
         res.status(200).json({
@@ -46,7 +49,9 @@ exports.getAttemptsByExam = async (req, res) => {
                 nama_ujian: exam.nama_ujian,
                 bobot_pilgan: exam.bobot_pilgan,
                 bobot_esai: exam.bobot_esai,
-                bobot_upload: exam.bobot_upload
+                bobot_upload: exam.bobot_upload,
+                siakad_kelas_kuliah_id: exam.siakad_kelas_kuliah_id,
+                siakad_periode_akademik_id: exam.siakad_periode_akademik_id
             },
             data
         });

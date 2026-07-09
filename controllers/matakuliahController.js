@@ -4,12 +4,17 @@ const prisma = new PrismaClient();
 // Create Mata Kuliah
 exports.createMatakuliah = async (req, res) => {
     try {
-        const { kode_mk, nama_mk, dosen_id } = req.body;
-        const newMk = await prisma.mata_kuliah.create({ 
-            data: { kode_mk, nama_mk, dosen_id: dosen_id ? parseInt(dosen_id) : null } 
+        const { kode_mk, nama_mk, dosen_id, siakad_id } = req.body;
+        const newMk = await prisma.mata_kuliah.create({
+            data: { kode_mk, nama_mk, dosen_id: dosen_id ? parseInt(dosen_id) : null, siakad_id: siakad_id || null }
         });
         res.status(201).json({ data: newMk });
-    } catch (error) { res.status(500).json({ message: "Gagal menyimpan mata kuliah" }); }
+    } catch (error) {
+        if (error.code === 'P2002') {
+            return res.status(409).json({ message: "Kode MK ini sudah terdaftar, atau mata kuliah SIAKAD ini sudah pernah diimpor sebelumnya." });
+        }
+        res.status(500).json({ message: "Gagal menyimpan mata kuliah" });
+    }
 };
 
 // Get All Mata Kuliah

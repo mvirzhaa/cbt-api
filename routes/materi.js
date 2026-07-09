@@ -3,6 +3,8 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs'); // <--- TAMBAHKAN INI
 const { PrismaClient } = require('@prisma/client');
+const { verifyToken, isDosenOrSuperAdmin } = require('../middlewares/authMiddleware');
+const handleUpload = require('../middlewares/uploadErrorHandler');
 
 const router = express.Router();
 const prisma = new PrismaClient();
@@ -20,13 +22,31 @@ const storage = multer.diskStorage({
   }
 });
 
-const upload = multer({ storage: storage });
+// 🔒 Batasi tipe & ukuran file materi (sebelumnya tanpa batas sama sekali)
+const fileFilter = (req, file, cb) => {
+  const extRegex = /jpeg|jpg|png|pdf|zip|doc|docx|ppt|pptx/;
+  const mimeRegex = /jpeg|jpg|png|pdf|zip|x-zip-compressed|msword|wordprocessingml|ms-powerpoint|presentationml/;
+
+  const extname = extRegex.test(path.extname(file.originalname).toLowerCase());
+  const mimetype = mimeRegex.test(file.mimetype);
+
+  if (mimetype && extname) {
+    return cb(null, true);
+  }
+  cb(new Error('Format file ditolak! Hanya diperbolehkan JPG, PNG, PDF, ZIP, Word, atau PowerPoint.'), false);
+};
+
+const upload = multer({
+  storage: storage,
+  fileFilter: fileFilter,
+  limits: { fileSize: 10 * 1024 * 1024 } // Materi kuliah (slide/PDF) boleh sedikit lebih besar: 10MB
+});
 
 // 2. Endpoint API untuk Upload Materi (POST)
-router.post('/upload', upload.single('file_materi'), async (req, res) => {
+router.post('/upload', verifyToken, isDosenOrSuperAdmin, handleUpload(upload.single('file_materi'), 'error'), async (req, res) => {
   try {
-    const { kode_mk, dosen_id, judul, deskripsi } = req.body;
-    
+    const { kode_mk, judul, deskripsi } = req.body;
+
     // Cek apakah ada file yang terkirim
     if (!req.file) {
       return res.status(400).json({ error: 'File materi wajib diunggah!' });
@@ -35,11 +55,11 @@ router.post('/upload', upload.single('file_materi'), async (req, res) => {
     // Membuat jalur file untuk disimpan ke Database
     const file_path = `/uploads/materi/${req.file.filename}`;
 
-    // Simpan data ke Database via Prisma
+    // 🔒 dosen_id diambil dari token JWT (req.user), BUKAN dari body — mencegah upload atas nama dosen lain
     const materiBaru = await prisma.materi_kuliah.create({
       data: {
         kode_mk: kode_mk,
-        dosen_id: parseInt(dosen_id),
+        dosen_id: req.user.id,
         judul: judul,
         deskripsi: deskripsi || '',
         file_path: file_path,
@@ -60,7 +80,7 @@ router.post('/upload', upload.single('file_materi'), async (req, res) => {
 // ==========================================
 // 📖 GET: AMBIL DAFTAR MATERI
 // ==========================================
-router.get('/', async (req, res) => {
+router.get('/', verifyToken, async (req, res) => {
   try {
     const daftarMateri = await prisma.materi_kuliah.findMany({
       include: { 
@@ -79,13 +99,18 @@ router.get('/', async (req, res) => {
 // ==========================================
 // 🗑️ DELETE: HAPUS MATERI & FILE FISIKNYA
 // ==========================================
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', verifyToken, isDosenOrSuperAdmin, async (req, res) => {
   try {
     const id = parseInt(req.params.id);
-    
+
     // 1. Cari data materi di database
     const materi = await prisma.materi_kuliah.findUnique({ where: { id } });
     if (!materi) return res.status(404).json({ error: 'Materi tidak ditemukan' });
+
+    // 🔒 Dosen hanya boleh hapus materi miliknya sendiri; super_admin boleh semua
+    if (req.user.role !== 'super_admin' && materi.dosen_id !== req.user.id) {
+      return res.status(403).json({ error: 'Anda tidak berhak menghapus materi ini.' });
+    }
 
     // 2. Hapus file fisiknya dari folder uploads/materi
     // (Agar harddisk server tidak penuh dengan file sampah)

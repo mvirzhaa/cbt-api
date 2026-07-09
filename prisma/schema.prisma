@@ -29,6 +29,9 @@ model exams {
   grading_type      exams_grading_type? @default(PER_SOAL)
   exam_terms        exam_terms[]
 
+  siakad_kelas_kuliah_id     String? @db.VarChar(64)
+  siakad_periode_akademik_id String? @db.VarChar(64)
+
   @@index([kode_mk], map: "kode_mk")
 }
 
@@ -36,6 +39,7 @@ model mata_kuliah {
   kode_mk       String          @id @db.VarChar(50)
   nama_mk       String          @db.VarChar(255)
   dosen_id      Int?
+  siakad_id     String?         @unique @db.VarChar(64)
   users         users?          @relation(fields: [dosen_id], references: [id], onDelete: SetNull, onUpdate: Cascade)
   exams         exams[]
   materi_kuliah materi_kuliah[]
@@ -79,6 +83,7 @@ model student_responses {
   exams            exams                               @relation(fields: [exam_id], references: [id], onDelete: Cascade, onUpdate: Restrict, map: "student_responses_ibfk_2")
   questions        questions                           @relation(fields: [question_id], references: [id], onDelete: Cascade, onUpdate: Restrict, map: "student_responses_ibfk_3")
 
+  @@unique([user_id, exam_id, question_id], map: "uniq_student_response")
   @@index([exam_id], map: "exam_id")
   @@index([question_id], map: "question_id")
   @@index([user_id], map: "user_id")
@@ -172,6 +177,10 @@ model exam_attempts {
   verified_at     DateTime?            @db.Timestamp(0)
   verified_by     Int?
 
+  siakad_sync_status exam_attempts_siakad_sync_status @default(BELUM_SINKRON)
+  siakad_synced_at   DateTime?                         @db.DateTime(0)
+  siakad_error       String?                           @db.VarChar(255)
+
   users    users  @relation("student_attempts", fields: [user_id], references: [id], onDelete: Cascade)
   exams    exams  @relation(fields: [exam_id], references: [id], onDelete: Cascade)
   verifier users? @relation("dosen_verifications", fields: [verified_by], references: [id], onDelete: SetNull)
@@ -184,6 +193,13 @@ model exam_attempts {
 enum exam_attempts_status {
   MENUNGGU_VERIFIKASI
   SELESAI
+}
+
+enum exam_attempts_siakad_sync_status {
+  BELUM_SINKRON
+  ANTRIAN
+  TERKIRIM
+  GAGAL
 }
 
 // ==========================================

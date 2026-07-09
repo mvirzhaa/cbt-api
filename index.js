@@ -17,6 +17,7 @@ const gradingRoutes = require('./routes/grading');
 const materiRoutes = require('./routes/materi');
 const proctoringRoutes = require('./routes/proctoring');
 const dosenRoutes = require('./routes/dosen');
+const siakadRoutes = require('./routes/siakad');
 
 // =========================================================================
 // ⚙️ SETUP MIDDLEWARE GLOBAL
@@ -57,6 +58,7 @@ app.use('/api/grading', gradingRoutes);
 app.use('/api/materi', materiRoutes);
 app.use('/api/proctoring', proctoringRoutes);
 app.use('/api/dosen', dosenRoutes);
+app.use('/api/siakad', siakadRoutes);
 
 // =========================================================================
 // 🛡️ GLOBAL ERROR HANDLER
