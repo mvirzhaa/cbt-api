@@ -104,7 +104,7 @@ exports.approveUser = async (req, res) => {
 // 4. EXTERNAL LOGIN (Integrasi SSO dengan TIAS Backend)
 exports.externalLogin = async (req, res) => {
   try {
-    const { email, nama, nim, shared_secret } = req.body;
+    const { email, nama, nim, role, shared_secret } = req.body;
 
     // Validasi field wajib
     if (!email || !shared_secret) {
@@ -122,6 +122,10 @@ exports.externalLogin = async (req, res) => {
       });
     }
 
+    // Whitelist ketat: hanya 'dosen'/'mahasiswa' boleh lewat SSO ini, apa pun yang dikirim
+    // caller — cegah 'admin'/'super_admin' masuk lewat kanal auto-provisioning ini.
+    const safeRole = role === 'dosen' ? 'dosen' : 'mahasiswa';
+
     // Cari atau buat user berdasarkan email
     let user = await prisma.users.findUnique({ where: { email } });
 
@@ -137,7 +141,7 @@ exports.externalLogin = async (req, res) => {
             require('crypto').randomBytes(32).toString('hex'),
             10
           ),
-          role: 'mahasiswa',
+          role: safeRole,
           status_aktif: true // Langsung aktif karena sudah diotentikasi TIAS Backend
         }
       });
