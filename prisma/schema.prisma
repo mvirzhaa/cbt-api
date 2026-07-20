@@ -26,7 +26,7 @@ model exams {
   bobot_upload      Int                 @default(0)
   examViolations    exam_violations[]
 
-  grading_type      exams_grading_type? @default(PER_SOAL)
+  grading_type      exams_grading_type? @default(PER_KATEGORI)
   exam_terms        exam_terms[]
 
   siakad_kelas_kuliah_id     String? @db.VarChar(64)

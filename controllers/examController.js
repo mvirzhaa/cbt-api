@@ -2,6 +2,8 @@ const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 const { toPositiveInt, toValidDate, isNonEmptyString } = require('../utils/helpers');
 
+const ALLOWED_GRADING_TYPES = new Set(['PER_KATEGORI', 'PER_SOAL']);
+
 // 1. Tarik Daftar Ujian Dosen
 exports.getAllExams = async (req, res) => {
     try {
@@ -18,26 +20,30 @@ exports.getAllExams = async (req, res) => {
 // 2. Terbitkan Ujian Baru
 exports.createExam = async (req, res) => {
     try {
-        const { kode_mk, nama_ujian, waktu_mulai, waktu_selesai, durasi, bobot_pilgan, bobot_esai, bobot_upload, exam_terms } = req.body;
+        const { kode_mk, nama_ujian, waktu_mulai, waktu_selesai, durasi, bobot_pilgan, bobot_esai, bobot_upload, grading_type, exam_terms } = req.body;
         const rawUserId = req.user && req.user.id;
         const durasiInt = toPositiveInt(durasi);
         const waktuMulaiDate = toValidDate(waktu_mulai);
         const waktuSelesaiDate = toValidDate(waktu_selesai);
-        
+
         if (!rawUserId) return res.status(401).json({ message: "Identitas tidak ditemukan." });
         if (!isNonEmptyString(kode_mk) || !isNonEmptyString(nama_ujian) || !waktuMulaiDate || !waktuSelesaiDate || !durasiInt) {
             return res.status(400).json({ message: "Input ujian tidak valid." });
         }
         if (waktuMulaiDate >= waktuSelesaiDate) return res.status(400).json({ message: "waktu_mulai harus lebih kecil dari waktu_selesai." });
+        if (grading_type !== undefined && !ALLOWED_GRADING_TYPES.has(grading_type)) {
+            return res.status(400).json({ message: "grading_type harus PER_KATEGORI atau PER_SOAL." });
+        }
 
         const token_ujian = Math.random().toString(36).substring(2, 8).toUpperCase();
-        
+
         const dataPayload = {
             kode_mk, kode_dosen: rawUserId.toString(), nama_ujian, token_ujian,
             waktu_mulai: waktuMulaiDate, waktu_selesai: waktuSelesaiDate, durasi: durasiInt,
             bobot_pilgan: parseInt(bobot_pilgan) || 0,
             bobot_esai: parseInt(bobot_esai) || 0,
-            bobot_upload: parseInt(bobot_upload) || 0
+            bobot_upload: parseInt(bobot_upload) || 0,
+            grading_type: grading_type || 'PER_KATEGORI'
         };
 
         if (Array.isArray(exam_terms) && exam_terms.length > 0) {
@@ -57,7 +63,7 @@ exports.updateExam = async (req, res) => {
         const id = parseInt(req.params.id);
         if (!id) return res.status(400).json({ message: "ID ujian tidak valid." });
 
-        const { kode_mk, nama_ujian, waktu_mulai, waktu_selesai, durasi, bobot_pilgan, bobot_esai, bobot_upload, exam_terms } = req.body;
+        const { kode_mk, nama_ujian, waktu_mulai, waktu_selesai, durasi, bobot_pilgan, bobot_esai, bobot_upload, grading_type, exam_terms } = req.body;
 
         const waktuMulaiDate = new Date(waktu_mulai);
         const waktuSelesaiDate = new Date(waktu_selesai);
@@ -67,6 +73,9 @@ exports.updateExam = async (req, res) => {
         }
         if (waktuMulaiDate >= waktuSelesaiDate) {
             return res.status(400).json({ message: "Waktu mulai harus lebih awal dari waktu selesai." });
+        }
+        if (grading_type !== undefined && !ALLOWED_GRADING_TYPES.has(grading_type)) {
+            return res.status(400).json({ message: "grading_type harus PER_KATEGORI atau PER_SOAL." });
         }
 
         const examCheck = await prisma.exams.findUnique({ where: { id } });
@@ -83,7 +92,8 @@ exports.updateExam = async (req, res) => {
             durasi: parseInt(durasi) || 90,
             bobot_pilgan: parseInt(bobot_pilgan) || 0,
             bobot_esai: parseInt(bobot_esai) || 0,
-            bobot_upload: parseInt(bobot_upload) || 0
+            bobot_upload: parseInt(bobot_upload) || 0,
+            grading_type: grading_type || examCheck.grading_type || 'PER_KATEGORI'
         };
 
         if (Array.isArray(exam_terms)) {

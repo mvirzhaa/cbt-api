@@ -48,17 +48,13 @@ exports.getMatakuliahScores = async (req, res) => {
         for (const key in groupedData) {
             const data = groupedData[key];
 
-            // 🔧 Rekap ini adalah PREVIEW sebelum dosen verifikasi resmi di dosenController.verifyExam,
-            // yang SELALU memakai rumus persentase berbobot per-kategori (bobot_pilgan/esai/upload).
-            // `grading_type` di DB tidak pernah bisa diset lewat API (selalu default PER_SOAL) dan mode
-            // PER_SOAL murni belum benar-benar dipakai di alur publish nilai — jadi paksa PER_KATEGORI
-            // di sini juga, supaya angka preview konsisten dengan nilai akhir yang akan dipublikasikan.
-            // TODO: saat bobot per-soal individual (bukan per-kategori) diimplementasikan, cabang
-            // grading_type PER_SOAL di gradingService.calculateFinalScore bisa mulai dipakai lagi di sini.
+            // 🔧 Rekap ini adalah PREVIEW sebelum dosen verifikasi resmi di dosenController.verifyExam.
+            // Dipakai grading_type asli tiap ujian supaya angka preview konsisten dengan nilai akhir
+            // yang akan dipublikasikan verifyExam (yang juga bercabang berdasarkan grading_type ini).
             const gradingResult = gradingService.calculateFinalScore(
                 data.responses,
                 data.questions,
-                { ...data.examConfig, grading_type: 'PER_KATEGORI' }
+                data.examConfig
             );
 
             finalScores.push({
@@ -67,7 +63,7 @@ exports.getMatakuliahScores = async (req, res) => {
                 total_skor: gradingResult.totalScore, // Skor akurat sesuai rumus persentase berbobot
                 rincian: gradingResult.breakdown, // Bawa rincian Pilgan/Esai/Upload ke Frontend Web
                 status: gradingResult.isAllGraded ? 'Selesai' : 'Menunggu Koreksi',
-                grading_type: 'PER_KATEGORI'
+                grading_type: data.examConfig.grading_type || 'PER_KATEGORI'
             });
         }
 
