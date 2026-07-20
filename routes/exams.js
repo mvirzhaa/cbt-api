@@ -7,6 +7,7 @@ const { verifyToken, isDosen, isDosenOrSuperAdmin } = require('../middlewares/au
 router.get('/', verifyToken, isDosenOrSuperAdmin, examController.getAllExams);
 router.post('/', verifyToken, isDosen, examController.createExam);
 router.put('/:id', verifyToken, isDosenOrSuperAdmin, examController.updateExam);
+router.delete('/:id', verifyToken, isDosenOrSuperAdmin, examController.deleteExam);
 router.get('/:exam_id/rekap-detail', verifyToken, isDosen, examController.getExamRekapDetail);
 
 module.exports = router;

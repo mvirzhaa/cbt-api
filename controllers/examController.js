@@ -7,9 +7,11 @@ exports.getAllExams = async (req, res) => {
     try {
         const exams = await prisma.exams.findMany({
             where: req.user.role === 'super_admin' ? {} : { kode_dosen: req.user.id.toString() },
-            include: { mata_kuliah: true, exam_terms: { orderBy: { urutan: 'asc' } } }, orderBy: { waktu_mulai: 'desc' }
+            include: { mata_kuliah: true, exam_terms: { orderBy: { urutan: 'asc' } }, _count: { select: { questions: true } } },
+            orderBy: { waktu_mulai: 'desc' }
         });
-        res.status(200).json({ data: exams });
+        const withJumlahSoal = exams.map(({ _count, ...exam }) => ({ ...exam, jumlah_soal: _count.questions }));
+        res.status(200).json({ data: withJumlahSoal });
     } catch (error) { res.status(500).json({ message: "Gagal mengambil data ujian." }); }
 };
 
@@ -173,5 +175,25 @@ exports.getExamRekapDetail = async (req, res) => {
     } catch (error) {
         console.error("❌ ERROR GET REKAP DETAIL:", error);
         res.status(500).json({ message: "Gagal menarik rincian nilai." });
+    }
+};
+
+// 5. HAPUS Ujian (cascade ke questions/student_responses/exam_attempts/exam_terms/exam_violations lewat schema)
+exports.deleteExam = async (req, res) => {
+    try {
+        const id = toPositiveInt(req.params.id);
+        if (!id) return res.status(400).json({ message: "ID ujian tidak valid." });
+
+        const exam = await prisma.exams.findUnique({ where: { id } });
+        if (!exam) return res.status(404).json({ message: "Ujian tidak ditemukan." });
+        if (req.user.role !== 'super_admin' && exam.kode_dosen !== req.user.id.toString()) {
+            return res.status(403).json({ message: "Anda tidak berhak menghapus ujian ini." });
+        }
+
+        await prisma.exams.delete({ where: { id } });
+        res.status(200).json({ message: "Ujian berhasil dihapus." });
+    } catch (error) {
+        console.error("❌ ERROR DELETE EXAM:", error);
+        res.status(500).json({ message: "Gagal menghapus ujian." });
     }
 };
