@@ -43,6 +43,91 @@ model mata_kuliah {
   users         users?          @relation(fields: [dosen_id], references: [id], onDelete: SetNull, onUpdate: Cascade)
   exams         exams[]
   materi_kuliah materi_kuliah[]
+  cpmk          cpmk[]
+  question_bank question_bank[]
+}
+
+// ==========================================
+// 🎯 TABEL CPMK / SUB-CPMK (PATOKAN SOAL & NILAI)
+// - Master data manual untuk sekarang; kolom external_id disiapkan
+//   untuk sinkronisasi OBE/SIAKAD di masa depan (pola sama seperti
+//   mata_kuliah.siakad_id), belum ada integrasi live.
+// ==========================================
+model cpmk {
+  id          Int      @id @default(autoincrement())
+  kode_mk     String   @db.VarChar(50)
+  kode_cpmk   String   @db.VarChar(50)
+  deskripsi   String   @db.Text
+  external_id String?  @unique @db.VarChar(64)
+  created_at  DateTime @default(now()) @db.Timestamp(0)
+
+  mata_kuliah   mata_kuliah     @relation(fields: [kode_mk], references: [kode_mk], onDelete: Cascade, onUpdate: Restrict)
+  sub_cpmk      sub_cpmk[]
+  questions     questions[]
+  question_bank question_bank[]
+
+  @@unique([kode_mk, kode_cpmk])
+  @@index([kode_mk])
+}
+
+model sub_cpmk {
+  id            Int      @id @default(autoincrement())
+  cpmk_id       Int
+  kode_sub_cpmk String   @db.VarChar(50)
+  deskripsi     String   @db.Text
+  external_id   String?  @unique @db.VarChar(64)
+  created_at    DateTime @default(now()) @db.Timestamp(0)
+
+  cpmk          cpmk            @relation(fields: [cpmk_id], references: [id], onDelete: Cascade, onUpdate: Restrict)
+  questions     questions[]
+  question_bank question_bank[]
+
+  @@unique([cpmk_id, kode_sub_cpmk])
+  @@index([cpmk_id])
+}
+
+// ==========================================
+// 📦 TABEL BANK SOAL (POOL SOAL REUSABLE PER MATA KULIAH)
+// - Tidak terikat ke exam manapun. Soal masuk ke exam lewat COPY
+//   (lihat questionBankController.importFromBank), bukan reference,
+//   supaya edit di sini tidak mengubah soal yang sudah dipakai di exam.
+// ==========================================
+model question_bank {
+  id            Int                  @id @default(autoincrement())
+  kode_mk       String               @db.VarChar(50)
+  dibuat_oleh   String               @db.VarChar(50)
+  cpmk_id       Int?
+  sub_cpmk_id   Int?
+  tipe_soal     questions_tipe_soal
+  isi_soal      String               @db.Text
+  kunci_jawaban String?              @db.Text
+  bobot_nilai   Decimal?             @default(10.00) @db.Decimal(5, 2)
+  sumber        question_bank_sumber @default(MANUAL)
+  created_at    DateTime             @default(now()) @db.Timestamp(0)
+  updated_at    DateTime             @updatedAt
+
+  mata_kuliah mata_kuliah             @relation(fields: [kode_mk], references: [kode_mk], onDelete: Cascade, onUpdate: Restrict)
+  cpmk        cpmk?                   @relation(fields: [cpmk_id], references: [id], onDelete: SetNull)
+  sub_cpmk    sub_cpmk?               @relation(fields: [sub_cpmk_id], references: [id], onDelete: SetNull)
+  options     question_bank_options[]
+
+  @@index([kode_mk])
+  @@index([sub_cpmk_id])
+}
+
+model question_bank_options {
+  id               Int           @id @default(autoincrement())
+  question_bank_id Int
+  label_pilihan    String        @db.VarChar(5)
+  teks_pilihan     String        @db.Text
+  question_bank    question_bank @relation(fields: [question_bank_id], references: [id], onDelete: Cascade)
+
+  @@index([question_bank_id])
+}
+
+enum question_bank_sumber {
+  MANUAL
+  AI_GENERATED
 }
 
 model question_options {
@@ -59,6 +144,8 @@ model questions {
   id                Int                 @id @default(autoincrement())
   exam_id           Int
   cpmk              String              @db.VarChar(100)
+  cpmk_id           Int?
+  sub_cpmk_id       Int?
   tipe_soal         questions_tipe_soal
   isi_soal          String              @db.Text
   kunci_jawaban     String?             @db.Text
@@ -66,8 +153,11 @@ model questions {
   question_options  question_options[]
   exams             exams               @relation(fields: [exam_id], references: [id], onDelete: Cascade, onUpdate: Restrict, map: "questions_ibfk_1")
   student_responses student_responses[]
+  cpmk_ref          cpmk?               @relation(fields: [cpmk_id], references: [id], onDelete: SetNull)
+  sub_cpmk_ref      sub_cpmk?           @relation(fields: [sub_cpmk_id], references: [id], onDelete: SetNull)
 
   @@index([exam_id], map: "exam_id")
+  @@index([sub_cpmk_id])
 }
 
 model student_responses {

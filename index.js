@@ -18,6 +18,8 @@ const materiRoutes = require('./routes/materi');
 const proctoringRoutes = require('./routes/proctoring');
 const dosenRoutes = require('./routes/dosen');
 const siakadRoutes = require('./routes/siakad');
+const cpmkRoutes = require('./routes/cpmk');
+const questionBankRoutes = require('./routes/questionBank');
 
 // =========================================================================
 // ⚙️ SETUP MIDDLEWARE GLOBAL
@@ -59,6 +61,8 @@ app.use('/api/materi', materiRoutes);
 app.use('/api/proctoring', proctoringRoutes);
 app.use('/api/dosen', dosenRoutes);
 app.use('/api/siakad', siakadRoutes);
+app.use('/api/cpmk', cpmkRoutes);
+app.use('/api/question-bank', questionBankRoutes);
 
 // =========================================================================
 // 🛡️ GLOBAL ERROR HANDLER
