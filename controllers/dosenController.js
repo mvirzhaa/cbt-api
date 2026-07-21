@@ -67,6 +67,8 @@ exports.getAttemptsByExam = async (req, res) => {
             };
         });
 
+        const totalBobotSoal = allQuestions.reduce((sum, q) => sum + (q.bobot_nilai ? parseFloat(q.bobot_nilai) : 0), 0);
+
         res.status(200).json({
             exam_info: {
                 id: exam.id,
@@ -75,6 +77,7 @@ exports.getAttemptsByExam = async (req, res) => {
                 bobot_pilgan: exam.bobot_pilgan,
                 bobot_esai: exam.bobot_esai,
                 bobot_upload: exam.bobot_upload,
+                total_bobot_soal: totalBobotSoal,
                 siakad_kelas_kuliah_id: exam.siakad_kelas_kuliah_id,
                 siakad_periode_akademik_id: exam.siakad_periode_akademik_id
             },
