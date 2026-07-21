@@ -27,22 +27,45 @@ exports.getAttemptsByExam = async (req, res) => {
             orderBy: { submitted_at: 'asc' }
         });
 
-        const data = attempts.map(a => ({
-            attempt_id: a.id,
-            user_id: a.user_id,
-            nama_mahasiswa: a.users.nama,
-            nim: a.users.nim || '-',
-            skor_pilgan_100: parseFloat(a.skor_pilgan_100 || 0),
-            skor_esai_100: parseFloat(a.skor_esai_100 || 0),
-            skor_file_100: parseFloat(a.skor_file_100 || 0),
-            final_score: a.final_score !== null ? parseFloat(a.final_score) : null,
-            status: a.status,
-            submitted_at: a.submitted_at,
-            verified_at: a.verified_at,
-            siakad_sync_status: a.siakad_sync_status,
-            siakad_synced_at: a.siakad_synced_at,
-            siakad_error: a.siakad_error
-        }));
+        // 🔍 Transparansi: hitung estimasi nilai akhir & kelengkapan koreksi SEBELUM diverifikasi,
+        // supaya dosen tidak perlu klik "Verifikasi" dulu baru lihat angkanya.
+        const allQuestions = await prisma.questions.findMany({ where: { exam_id: examId } });
+        const allResponses = await prisma.student_responses.findMany({ where: { exam_id: examId } });
+        const responsesByUser = {};
+        allResponses.forEach(r => {
+            if (!responsesByUser[r.user_id]) responsesByUser[r.user_id] = [];
+            responsesByUser[r.user_id].push(r);
+        });
+
+        const data = attempts.map(a => {
+            const userResponses = responsesByUser[a.user_id] || [];
+            const isAllGraded = userResponses.length > 0 && userResponses.every(r => r.status_penilaian !== 'menunggu');
+
+            let previewFinalScore = null;
+            if (exam.grading_type === 'PER_SOAL') {
+                const gradingResult = gradingService.calculateFinalScore(userResponses, allQuestions, { grading_type: 'PER_SOAL' });
+                previewFinalScore = gradingResult.totalScore;
+            }
+
+            return {
+                attempt_id: a.id,
+                user_id: a.user_id,
+                nama_mahasiswa: a.users.nama,
+                nim: a.users.nim || '-',
+                skor_pilgan_100: parseFloat(a.skor_pilgan_100 || 0),
+                skor_esai_100: parseFloat(a.skor_esai_100 || 0),
+                skor_file_100: parseFloat(a.skor_file_100 || 0),
+                final_score: a.final_score !== null ? parseFloat(a.final_score) : null,
+                preview_final_score: previewFinalScore,
+                is_all_graded: isAllGraded,
+                status: a.status,
+                submitted_at: a.submitted_at,
+                verified_at: a.verified_at,
+                siakad_sync_status: a.siakad_sync_status,
+                siakad_synced_at: a.siakad_synced_at,
+                siakad_error: a.siakad_error
+            };
+        });
 
         res.status(200).json({
             exam_info: {
