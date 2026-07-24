@@ -146,11 +146,21 @@ exports.externalLogin = async (req, res) => {
         }
       });
     } else {
-      // Update nim jika belum ada
+      // Sinkronkan role tiap login SSO (TIAS adalah sumber kebenaran role terbaru) dan isi
+      // nim jika belum ada. Role admin/super_admin sengaja TIDAK disentuh di sini — safeRole
+      // cuma boleh 'dosen'/'mahasiswa', jadi jangan sampai akun admin yang emailnya kebetulan
+      // sama ter-downgrade lewat kanal SSO ini.
+      const dataToUpdate = {};
+      if ((user.role === 'dosen' || user.role === 'mahasiswa') && user.role !== safeRole) {
+        dataToUpdate.role = safeRole;
+      }
       if (!user.nim && nim) {
+        dataToUpdate.nim = nim;
+      }
+      if (Object.keys(dataToUpdate).length > 0) {
         user = await prisma.users.update({
           where: { id: user.id },
-          data: { nim }
+          data: dataToUpdate
         });
       }
     }
