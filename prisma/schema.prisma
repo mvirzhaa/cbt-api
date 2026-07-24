@@ -191,7 +191,8 @@ model users {
   student_responses student_responses[]
   mata_kuliah       mata_kuliah[]
   materi_kuliah     materi_kuliah[]
-  exam_violations   exam_violations[]
+  exam_violations      exam_violations[] @relation("pelaku_violations")
+  reviewed_violations  exam_violations[] @relation("peninjau_violations")
   student_attempts     exam_attempts[]  @relation("student_attempts")
   dosen_verifications  exam_attempts[]  @relation("dosen_verifications")
 }
@@ -235,15 +236,34 @@ model materi_kuliah {
 // 🚨 TABEL PELANGGARAN UJIAN (AI PROCTORING)
 // ==========================================
 model exam_violations {
-  id                Int      @id @default(autoincrement())
+  id                Int                                @id @default(autoincrement())
   user_id           Int
   exam_id           Int
-  jenis_pelanggaran String // Contoh: "TIDAK_ADA_WAJAH", "LEBIH_DARI_SATU_WAJAH"
-  foto_bukti        String // Path ke file gambar screenshot
-  waktu_kejadian    DateTime @default(now())
+  jenis_pelanggaran exam_violations_jenis_pelanggaran
+  foto_bukti        String? // Path ke file gambar screenshot (null untuk pelanggaran yang dideteksi server, mis. heartbeat AI hilang)
+  waktu_kejadian    DateTime                           @default(now())
+  status            exam_violations_status            @default(BARU)
+  ditinjau_at       DateTime?
+  ditinjau_oleh     Int?
 
-  users users @relation(fields: [user_id], references: [id], onDelete: Cascade)
-  exams exams @relation(fields: [exam_id], references: [id], onDelete: Cascade)
+  users    users  @relation("pelaku_violations", fields: [user_id], references: [id], onDelete: Cascade)
+  exams    exams  @relation(fields: [exam_id], references: [id], onDelete: Cascade)
+  peninjau users? @relation("peninjau_violations", fields: [ditinjau_oleh], references: [id], onDelete: SetNull)
+}
+
+enum exam_violations_jenis_pelanggaran {
+  TIDAK_ADA_WAJAH
+  LEBIH_DARI_SATU_WAJAH
+  BERPINDAH_TAB
+  KELUAR_LAYAR_PENUH
+  MENYALIN_TEMPEL
+  DEVTOOLS_TERDETEKSI
+  PENGAWAS_AI_TIDAK_AKTIF
+}
+
+enum exam_violations_status {
+  BARU
+  DITINJAU
 }
 
 enum exams_grading_type {

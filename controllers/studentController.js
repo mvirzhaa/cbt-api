@@ -1,6 +1,7 @@
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 const aiService = require('../services/aiService'); // ✅ Import Otak AI Kapten
+const proctoringHeartbeatService = require('../services/proctoringHeartbeatService');
 const { isNonEmptyString } = require('../utils/helpers');
 
 exports.verifyToken = async (req, res) => {
@@ -241,6 +242,10 @@ exports.submitExam = async (req, res) => {
             throw txError;
         }
 
+        // 💓 Ujian sudah selesai dikumpulkan — hentikan pelacakan heartbeat supaya
+        // sweep proctoring tidak salah mencatat "AI tidak aktif" setelah ujian berakhir.
+        proctoringHeartbeatService.stopTracking(user_id, examIdInt);
+
         // 🤖 PHASE 1 OPTIMIZED: AI Queue for Essay Grading
         // FIX 1B: Soft limit handled in aiService.addToQueue()
         if (antreanEsaiAI.length > 0) {
@@ -277,12 +282,31 @@ exports.submitExam = async (req, res) => {
 
         // CRITICAL: Return response immediately (don't await AI processing)
         // AI grading happens in background, dosen will verify later
+
+        // Hitung ringkasan hasil untuk ditampilkan ke mahasiswa
+        const jumlahPilgan = questions.filter(q => q.tipe_soal === 'TIPE_1' || q.tipe_soal === 'TIPE_2').length;
+        const jumlahEsai   = questions.filter(q => q.tipe_soal === 'TIPE_3').length;
+        const jumlahUpload = questions.filter(q => q.tipe_soal === 'TIPE_4').length;
+
         res.status(200).json({
             message: "Ujian berhasil dikumpulkan! Nilai Anda sedang menunggu verifikasi dosen.",
             status: "MENUNGGU_VERIFIKASI",
             note: antreanEsaiAI.length > 0
                 ? "Soal esai sedang diproses AI. Dosen akan memverifikasi hasilnya."
-                : null
+                : null,
+            hasil: {
+                skor_pilgan_sementara: skor_pilgan_100,   // Skor pilgan skala 0-100 (auto-graded)
+                jumlah_soal: {
+                    total: questions.length,
+                    pilgan: jumlahPilgan,
+                    esai: jumlahEsai,
+                    upload: jumlahUpload
+                },
+                menunggu_koreksi: jumlahEsai + jumlahUpload > 0,
+                keterangan: jumlahEsai + jumlahUpload > 0
+                    ? `${jumlahEsai > 0 ? `${jumlahEsai} soal esai` : ''}${jumlahEsai > 0 && jumlahUpload > 0 ? ' dan ' : ''}${jumlahUpload > 0 ? `${jumlahUpload} soal upload` : ''} masih menunggu koreksi dosen.`
+                    : "Semua soal sudah dinilai otomatis."
+            }
         });
     } catch (error) { 
         console.error("❌ ERROR SUBMIT:", error);

@@ -127,7 +127,7 @@ uploads/         # Multer file storage
 - **questions**: Stores all question types with `bobot_nilai` (individual weight)
 - **student_responses**: Individual answers with `skor` and `status_penilaian`
 - **exam_attempts**: Human-in-the-loop verification table with aggregated scores (`skor_pilgan_100`, `skor_esai_100`, `skor_file_100`)
-- **exam_violations**: AI proctoring violations (not yet fully implemented)
+- **exam_violations**: AI proctoring violations (`jenis_pelanggaran` enum, `status` review workflow — see "AI Proctoring" below)
 
 ## Important Behaviors
 
@@ -157,6 +157,14 @@ Both AI auto-grading and manual grading update `exam_attempts` table:
 - `services/siakadClient.js` is the only file that talks to SIAKAD over HTTP. Without `SIAKAD_API_BASE_URL` set, it runs in **stub/simulation mode** (always succeeds, logs a warning) — fill in the real request/response shape here once SIAKAD's API contract is confirmed.
 - Sync status is tracked per attempt in `exam_attempts.siakad_sync_status` (`BELUM_SINKRON`/`ANTRIAN`/`TERKIRIM`/`GAGAL`) + `siakad_synced_at`/`siakad_error`, surfaced in `RekapNilai.jsx` (frontend) as a badge with a per-row Push/Retry button and a bulk "Push Semua ke SIAKAD" button.
 - Out of scope so far: pulling mata kuliah/kelas/KRS from SIAKAD, NIM/NIDN capture at registration, KRS enrollment validation on exam join. See `prisma/migration_siakad_sync.sql` for the schema this feature depends on (not yet applied to the live DB as of this writing — run it manually once MySQL is reachable, per this project's migration convention).
+
+### AI Proctoring
+- Detection runs entirely client-side in `TakeExam.jsx` (cbt-frontend): face-api.js (`tiny_face_detector`) scans every 3s for face count, plus behavior listeners for tab switch (`visibilitychange`), fullscreen exit (`fullscreenchange`), copy/paste/context-menu, and a devtools-open heuristic (`outerWidth`/`innerWidth` gap). Each detection posts a screenshot + `jenis_pelanggaran` to `POST /api/proctoring/report` (rate-limited, 12/min per user; `jenis_pelanggaran` validated against the Prisma enum `exam_violations_jenis_pelanggaran`).
+- **Identity verification is out of scope** — detection is presence/count/behavior-based only, it cannot confirm *which* student is on camera (would need a reference photo + face-recognition model, not just the lightweight detector currently loaded).
+- **Tamper detection**: FE pings `POST /api/proctoring/heartbeat` every 10s while an exam is in progress. `services/proctoringHeartbeatService.js` (in-memory, mirrors `siakadQueueService.js`'s pattern) sweeps every 15s and auto-logs a `PENGAWAS_AI_TIDAK_AKTIF` violation (no screenshot, `foto_bukti: null`) if a student's heartbeat goes silent for >20s — catches cases where the student disabled the proctoring script via devtools. Heartbeat tracking is stopped via `stopTracking()` when the exam is submitted (`studentController.js`), so a normal submission doesn't trigger a false "AI inactive" report.
+- Dosen dashboard (`AiProctoring.jsx`, frontend) polls `GET /api/proctoring` every 10s (filters: `exam_id`, `status`; paginated), and can mark a violation reviewed via `PATCH /api/proctoring/:id/review` (sets `status: DITINJAU`, `ditinjau_at`, `ditinjau_oleh`).
+- **Deliberately not connected to grading** — a logged violation never affects `exam_attempts`/`final_score`. Wiring proctoring outcomes into scoring/blocking is an intentional future decision, not an oversight.
+- Schema for this feature lives in `prisma/migration_proctoring_violation_enhancements.sql` (not yet applied to the live DB as of this writing — run it manually once MySQL is reachable, per this project's migration convention, same as `migration_siakad_sync.sql`).
 
 ## Known Limitations
 
