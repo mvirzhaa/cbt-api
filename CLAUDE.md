@@ -165,6 +165,11 @@ Both AI auto-grading and manual grading update `exam_attempts` table:
 - Dosen dashboard (`AiProctoring.jsx`, frontend) polls `GET /api/proctoring` every 10s (filters: `exam_id`, `status`; paginated), and can mark a violation reviewed via `PATCH /api/proctoring/:id/review` (sets `status: DITINJAU`, `ditinjau_at`, `ditinjau_oleh`).
 - **Deliberately not connected to grading** — a logged violation never affects `exam_attempts`/`final_score`. Wiring proctoring outcomes into scoring/blocking is an intentional future decision, not an oversight.
 - Schema for this feature lives in `prisma/migration_proctoring_violation_enhancements.sql` (not yet applied to the live DB as of this writing — run it manually once MySQL is reachable, per this project's migration convention, same as `migration_siakad_sync.sql`).
+- **Additional signals (detect-only, metadata-only — not blocking, not raw content)**, added on top of the above:
+  - `TIDAK_MENGGUNAKAN_SEB`: checked once when the exam starts, via `navigator.userAgent` for the Safe Exam Browser signature. Detect-only — a non-SEB browser is logged but never blocked from starting/continuing the exam.
+  - `KETIKAN_TIDAK_WAJAR`: an `onInput` listener on the exam wrapper inspects `InputEvent.inputType` for TIPE_3 essay textareas; `insertFromPaste`/`insertFromDrop`/`insertFromYank`/`insertReplacementText` catch paste-like insertions that bypass the normal `paste` event (already covered by `MENYALIN_TEMPEL`) — e.g. drag-dropped text. Deliberately does **not** record keystroke content, only the input-type metadata.
+  - `MOUSE_TIDAK_AKTIF`: tracks the timestamp of the last `mousemove` and last `keydown` (window-level listeners), checked every 30s; fires only when **both** have been idle past `MOUSE_INACTIVE_THRESHOLD` (3 min) — requiring both avoids false positives from students who type long essays without touching the mouse.
+  - New enum values live in `prisma/migration_proctoring_advanced_signals.sql` (same not-yet-applied convention as the other migration files here).
 
 ## Known Limitations
 

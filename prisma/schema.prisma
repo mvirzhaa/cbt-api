@@ -259,6 +259,9 @@ enum exam_violations_jenis_pelanggaran {
   MENYALIN_TEMPEL
   DEVTOOLS_TERDETEKSI
   PENGAWAS_AI_TIDAK_AKTIF
+  TIDAK_MENGGUNAKAN_SEB
+  KETIKAN_TIDAK_WAJAR
+  MOUSE_TIDAK_AKTIF
 }
 
 enum exam_violations_status {
