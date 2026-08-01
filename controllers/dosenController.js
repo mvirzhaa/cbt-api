@@ -72,6 +72,7 @@ exports.getAttemptsByExam = async (req, res) => {
         res.status(200).json({
             exam_info: {
                 id: exam.id,
+                kode_mk: exam.kode_mk,
                 nama_ujian: exam.nama_ujian,
                 grading_type: exam.grading_type || 'PER_KATEGORI',
                 bobot_pilgan: exam.bobot_pilgan,
@@ -79,7 +80,8 @@ exports.getAttemptsByExam = async (req, res) => {
                 bobot_upload: exam.bobot_upload,
                 total_bobot_soal: totalBobotSoal,
                 siakad_kelas_kuliah_id: exam.siakad_kelas_kuliah_id,
-                siakad_periode_akademik_id: exam.siakad_periode_akademik_id
+                siakad_periode_akademik_id: exam.siakad_periode_akademik_id,
+                siakad_rencana_evaluasi_id: exam.siakad_rencana_evaluasi_id
             },
             data
         });

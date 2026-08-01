@@ -22,7 +22,7 @@ exports.getCpmk = async (req, res) => {
 
 exports.createCpmk = async (req, res) => {
     try {
-        const { kode_mk, kode_cpmk, deskripsi } = req.body;
+        const { kode_mk, kode_cpmk, deskripsi, external_id } = req.body;
         if (!isNonEmptyString(kode_mk) || !isNonEmptyString(kode_cpmk) || !isNonEmptyString(deskripsi)) {
             return res.status(400).json({ message: "kode_mk, kode_cpmk, dan deskripsi wajib diisi." });
         }
@@ -30,10 +30,13 @@ exports.createCpmk = async (req, res) => {
         const mk = await prisma.mata_kuliah.findUnique({ where: { kode_mk } });
         if (!mk) return res.status(404).json({ message: "Mata kuliah tidak ditemukan." });
 
-        const newCpmk = await prisma.cpmk.create({ data: { kode_mk, kode_cpmk, deskripsi } });
+        const newCpmk = await prisma.cpmk.create({ data: { kode_mk, kode_cpmk, deskripsi, external_id: isNonEmptyString(external_id) ? external_id : null } });
         res.status(201).json({ message: "CPMK berhasil dibuat!", data: newCpmk });
     } catch (error) {
-        if (error.code === 'P2002') return res.status(409).json({ message: "Kode CPMK ini sudah terdaftar untuk mata kuliah tersebut." });
+        if (error.code === 'P2002') {
+            const isExternalIdConflict = error.meta?.target?.includes?.('external_id');
+            return res.status(409).json({ message: isExternalIdConflict ? "external_id ini sudah dipakai CPMK lain." : "Kode CPMK ini sudah terdaftar untuk mata kuliah tersebut." });
+        }
         res.status(500).json({ message: "Gagal menyimpan CPMK." });
     }
 };
@@ -84,7 +87,7 @@ exports.createSubCpmk = async (req, res) => {
         const cpmkId = toPositiveInt(req.params.cpmk_id);
         if (!cpmkId) return res.status(400).json({ message: "ID CPMK tidak valid." });
 
-        const { kode_sub_cpmk, deskripsi } = req.body;
+        const { kode_sub_cpmk, deskripsi, external_id } = req.body;
         if (!isNonEmptyString(kode_sub_cpmk) || !isNonEmptyString(deskripsi)) {
             return res.status(400).json({ message: "kode_sub_cpmk dan deskripsi wajib diisi." });
         }
@@ -92,10 +95,13 @@ exports.createSubCpmk = async (req, res) => {
         const cpmk = await prisma.cpmk.findUnique({ where: { id: cpmkId } });
         if (!cpmk) return res.status(404).json({ message: "CPMK tidak ditemukan." });
 
-        const newSubCpmk = await prisma.sub_cpmk.create({ data: { cpmk_id: cpmkId, kode_sub_cpmk, deskripsi } });
+        const newSubCpmk = await prisma.sub_cpmk.create({ data: { cpmk_id: cpmkId, kode_sub_cpmk, deskripsi, external_id: isNonEmptyString(external_id) ? external_id : null } });
         res.status(201).json({ message: "Sub-CPMK berhasil dibuat!", data: newSubCpmk });
     } catch (error) {
-        if (error.code === 'P2002') return res.status(409).json({ message: "Kode Sub-CPMK ini sudah terdaftar untuk CPMK tersebut." });
+        if (error.code === 'P2002') {
+            const isExternalIdConflict = error.meta?.target?.includes?.('external_id');
+            return res.status(409).json({ message: isExternalIdConflict ? "external_id ini sudah dipakai Sub-CPMK lain." : "Kode Sub-CPMK ini sudah terdaftar untuk CPMK tersebut." });
+        }
         res.status(500).json({ message: "Gagal menyimpan Sub-CPMK." });
     }
 };
