@@ -37,8 +37,9 @@ JWT_SECRET="your_secure_secret"
 PORT=3000
 GEMINI_API_KEY="your_gemini_api_key"
 TIAS_SHARED_SECRET="integration_key"  # Optional: for TIAS integration
-SIAKAD_API_BASE_URL="https://siakad.example.ac.id"  # Optional: unset = siakadClient runs in stub/simulation mode
-SIAKAD_SHARED_SECRET="integration_key"              # Optional: for SIAKAD push-nilai integration
+SIAKAD_API_BASE_URL="https://api-siak.uika-bogor.ac.id"  # Optional: unset = siakadClient runs in stub/simulation mode. Bare host, no /api suffix.
+SIAKAD_ADMIN_USERNAME="adminakademik"               # Required (when SIAKAD_API_BASE_URL is set): CBT's service-account login to SIAKAD
+SIAKAD_ADMIN_PASSWORD="password123"                 # Required (when SIAKAD_API_BASE_URL is set): see above
 ```
 
 ## Core Architecture
@@ -150,13 +151,78 @@ Both AI auto-grading and manual grading update `exam_attempts` table:
 3. Status changes from `menunggu` → `selesai`
 4. Triggers recalculation in `exam_attempts`
 
-### SIAKAD Score Push (outbound integration scaffolding)
-- Dosen sets a SIAKAD target once per exam: `PUT /api/siakad/exams/:exam_id/target` (`exams.siakad_kelas_kuliah_id` / `siakad_periode_akademik_id`) — CBT has no kelas/periode concept of its own, so this is manual.
-- Push is only allowed for `exam_attempts.status === 'SELESAI'` (dosen must verify/publish in CBT first): `POST /api/siakad/attempts/:attempt_id/push` (single) or `POST /api/siakad/exams/:exam_id/push` (bulk, all `SELESAI` attempts).
-- `services/siakadQueueService.js` mirrors `aiService.js`'s in-memory queue pattern (FIFO, TTL, retry with backoff, `getQueueStatus()`/`clearQueue()` exposed at `GET/POST /api/siakad/queue/status|clear`).
-- `services/siakadClient.js` is the only file that talks to SIAKAD over HTTP. Without `SIAKAD_API_BASE_URL` set, it runs in **stub/simulation mode** (always succeeds, logs a warning) — fill in the real request/response shape here once SIAKAD's API contract is confirmed.
-- Sync status is tracked per attempt in `exam_attempts.siakad_sync_status` (`BELUM_SINKRON`/`ANTRIAN`/`TERKIRIM`/`GAGAL`) + `siakad_synced_at`/`siakad_error`, surfaced in `RekapNilai.jsx` (frontend) as a badge with a per-row Push/Retry button and a bulk "Push Semua ke SIAKAD" button.
-- Out of scope so far: pulling mata kuliah/kelas/KRS from SIAKAD, NIM/NIDN capture at registration, KRS enrollment validation on exam join. See `prisma/migration_siakad_sync.sql` for the schema this feature depends on (not yet applied to the live DB as of this writing — run it manually once MySQL is reachable, per this project's migration convention).
+### SIAKAD Score Push (real integration — OBE/NL-SIAK "Jalur D")
+The contract below was reverse-engineered from `index (2).html` (an internal
+Postman-style dev tool for the SIAKAD/OBE backend, "Tes Response untuk BE —
+OBE & Jalur A/C"), not guessed — payload shapes are copied from its `kirim*`
+JS functions.
+
+- **Auth is per-request login, not a shared secret.** `services/siakadClient.js`
+  logs in as a CBT service account (`POST /api/auth/login` with
+  `SIAKAD_ADMIN_USERNAME`/`SIAKAD_ADMIN_PASSWORD`) and caches the returned JWT
+  until near expiry (decoded via `jsonwebtoken`), re-logging in on 401. There
+  is no more `SIAKAD_SHARED_SECRET`.
+- **Setup, once per exam** (dosen or super_admin), via `PUT
+  /api/siakad/exams/:exam_id/target`: `siakad_kelas_kuliah_id` +
+  `siakad_periode_akademik_id` (as before) **plus** `siakad_rencana_evaluasi_id`
+  — the SIAK "Rencana Evaluasi" row (one evaluation component, e.g. UTS) that
+  this exam's scores push to. To discover the right ID, call `GET
+  /api/siakad/rencana-evaluasi?kode_mk=&periode_id=` first (proxies SIAK's
+  `GET /koordinator-mk/mata-kuliah/:id/rencana-evaluasi`, resolving
+  `:id` from `mata_kuliah.siakad_id`).
+- **CPMK/Sub-CPMK mapping**: `cpmk.external_id` / `sub_cpmk.external_id`
+  (already in schema, previously unused) hold the SIAK CPMK/Sub-CPMK UUIDs.
+  `POST /api/siakad/mata-kuliah/:kode_mk/sync-cpmk?periode_id=` auto-fills
+  these by matching local `kode_cpmk`/`kode_sub_cpmk` against SIAK's
+  `masterCpmk` (exact, case-insensitive); anything it can't match is reported
+  back for manual fill via `PUT /api/cpmk/:id` / `PUT /api/sub-cpmk/:id`
+  (`external_id` is now an accepted field on both). `questions.cpmk_id`/
+  `sub_cpmk_id` can be set both when importing from the question bank
+  (`questionBankController.js`) *and* directly on `POST/PUT
+  /api/questions` (`cpmk_id`/`sub_cpmk_id` body fields — previously only the
+  free-text `cpmk` label was settable there). `GET /api/questions` returns a
+  `siakad_ready` flag per question (has a mapped CPMK/Sub-CPMK with a
+  populated `external_id`) so a dosen can see push-readiness before
+  publishing. Questions without a resolvable `cpmk_id`/`sub_cpmk_id` →
+  `external_id` are simply skipped from the breakdown push (not an error) —
+  same as the reference tool's own behavior when a mapping is missing.
+- **Push** is only allowed for `exam_attempts.status === 'SELESAI'` (dosen
+  must verify/publish in CBT first): `POST /api/siakad/attempts/:attempt_id/push`
+  (single) or `POST /api/siakad/exams/:exam_id/push` (bulk, all `SELESAI`
+  attempts). Each queued job does **two SIAK calls in sequence**:
+  1. `POST /cbt/komponen/:rencanaEvaluasiId/nilai` — per-question breakdown
+     (`skorDiperoleh`/`skorMaksimal` from `student_responses.skor`/
+     `questions.bobot_nilai`, `pemetaanCpmk` from the CPMK mapping above).
+     Ephemeral on SIAK's side; resending for the same student replaces, not
+     duplicates.
+  2. `POST /cbt/nilai-akhir` — `exam_attempts.final_score` as-is (SIAK derives
+     huruf mutu itself).
+
+  Both calls are keyed by **`krsId`** (SIAK's per-student per-class enrollment
+  ID — *not* NIM). `services/siakadQueueService.js` resolves NIM → krsId at
+  push time via `GET /dosen/kelas/:kelasId/nilai`, cached in-memory per class
+  for 10 minutes (not persisted — enrollment can change). A job only reaches
+  `TERKIRIM` if both calls succeed; a partial failure retries the whole job
+  (safe, since both endpoints are replace-not-duplicate).
+- `services/siakadQueueService.js` still mirrors `aiService.js`'s in-memory
+  queue pattern (FIFO, TTL, retry with backoff, `getQueueStatus()`/`clearQueue()`
+  exposed at `GET/POST /api/siakad/queue/status|clear`).
+- Without `SIAKAD_API_BASE_URL` set, `siakadClient.js` runs in **stub/simulation
+  mode** (every call — login, rencana-evaluasi lookup, peserta-kelas lookup,
+  both push calls — always succeeds and logs a warning instead of hitting the
+  network).
+- Sync status is tracked per attempt in `exam_attempts.siakad_sync_status`
+  (`BELUM_SINKRON`/`ANTRIAN`/`TERKIRIM`/`GAGAL`) + `siakad_synced_at`/
+  `siakad_error`, surfaced in `RekapNilai.jsx` (frontend) as a badge with a
+  per-row Push/Retry button and a bulk "Push Semua ke SIAKAD" button.
+- Schema: `prisma/migration_siakad_sync.sql` (kelas/periode target + sync
+  status columns) and `prisma/migration_siakad_obe_cbt_push.sql`
+  (`siakad_rencana_evaluasi_id`) — neither applied to the live DB as of this
+  writing, run manually once MySQL is reachable, per this project's migration
+  convention.
+- Still out of scope: NIM/NIDN capture at registration, KRS enrollment
+  validation on exam join (krsId lookup only happens at push time, not when a
+  student joins the exam).
 
 ### AI Proctoring
 - Detection runs entirely client-side in `TakeExam.jsx` (cbt-frontend): face-api.js (`tiny_face_detector`) scans every 3s for face count, plus behavior listeners for tab switch (`visibilitychange`), fullscreen exit (`fullscreenchange`), copy/paste/context-menu, and a devtools-open heuristic (`outerWidth`/`innerWidth` gap). Each detection posts a screenshot + `jenis_pelanggaran` to `POST /api/proctoring/report` (rate-limited, 12/min per user; `jenis_pelanggaran` validated against the Prisma enum `exam_violations_jenis_pelanggaran`).

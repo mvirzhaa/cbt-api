@@ -5,17 +5,72 @@ const siakadClient = require('./siakadClient');
 // ==========================================
 // 📤 SIAKAD PUSH QUEUE
 // Mirror pola aiService.js: in-memory FIFO queue, soft limit, TTL, retry+backoff.
+//
+// Tiap job = 1 mahasiswa/exam_attempt, dan menghasilkan 2 panggilan berurutan
+// ke SIAKAD (breakdown per soal lalu nilai akhir) — lihat kirimNilaiCbt() /
+// kirimNilaiAkhirCbt() di "Tes Response untuk BE" (dev tool internal SIAKAD).
+// krsId (id enrollment SIAK, bukan NIM) di-resolve di sini lewat cache
+// in-memory per kelas, bukan disimpan permanen — enrollment bisa berubah.
 // ==========================================
 
 const MAX_QUEUE_SIZE = 2000;
 const QUEUE_WARNING_THRESHOLD = 1000;
 const JOB_TTL_MS = 60 * 60 * 1000; // 1 jam
+const KRS_CACHE_TTL_MS = 10 * 60 * 1000; // 10 menit
 
 const pushQueue = [];
 let isProcessing = false;
 let rejectedJobsCount = 0;
 
 const maxRetries = 3;
+
+// { [kelasId]: { map: {nim: krsId}, fetchedAtMs } }
+const krsCacheByKelas = {};
+
+async function resolveKrsId(kelasId, nim) {
+    const cached = krsCacheByKelas[kelasId];
+    if (cached && Date.now() - cached.fetchedAtMs < KRS_CACHE_TTL_MS) {
+        return cached.map[nim] || null;
+    }
+
+    const result = await siakadClient.getPesertaKelas(kelasId);
+    if (!result.success) {
+        throw new Error(`Gagal ambil peserta kelas SIAK ${kelasId}: ${result.message || 'unknown error'}`);
+    }
+
+    const map = {};
+    (result.data || []).forEach(row => {
+        if (row.nim && row.rincianKrsId) map[row.nim] = row.rincianKrsId;
+    });
+    krsCacheByKelas[kelasId] = { map, fetchedAtMs: Date.now() };
+
+    return map[nim] || null;
+}
+
+async function pushJobToSiakad(job) {
+    let krsId;
+    try {
+        krsId = await resolveKrsId(job.kelas_kuliah_id, job.nim);
+    } catch (error) {
+        return { success: false, message: error.message };
+    }
+
+    if (!krsId) {
+        return { success: false, message: `NIM ${job.nim} tidak ditemukan di kelas SIAK ${job.kelas_kuliah_id} (cek pemetaan KRS / target kelas).` };
+    }
+
+    const breakdownResult = await siakadClient.pushKomponenNilai(job.rencana_evaluasi_id, [
+        { krsId, breakdown: job.breakdown || [] }
+    ]);
+    if (!breakdownResult.success) return breakdownResult;
+
+    const nilaiAkhirResult = await siakadClient.pushNilaiAkhir([
+        { krsId, nilaiAkhir: job.final_score }
+    ]);
+    if (!nilaiAkhirResult.success) return nilaiAkhirResult;
+
+    return { success: true, simulated: breakdownResult.simulated && nilaiAkhirResult.simulated };
+}
 
 const processQueue = async () => {
     if (isProcessing || pushQueue.length === 0) return;
@@ -41,7 +96,7 @@ const processQueue = async () => {
         }
 
         try {
-            const result = await siakadClient.pushNilai(job);
+            const result = await pushJobToSiakad(job);
 
             if (result.success) {
                 await prisma.exam_attempts.update({
@@ -82,6 +137,7 @@ const processQueue = async () => {
 
 /**
  * Tambah job push nilai ke queue.
+ * @param {object} job - { attempt_id, nim, kelas_kuliah_id, rencana_evaluasi_id, final_score, breakdown }
  * @returns {boolean} true jika diterima, false jika ditolak (queue penuh)
  */
 exports.addToQueue = (job) => {

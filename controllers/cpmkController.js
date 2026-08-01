@@ -43,7 +43,7 @@ exports.updateCpmk = async (req, res) => {
         const id = toPositiveInt(req.params.id);
         if (!id) return res.status(400).json({ message: "ID CPMK tidak valid." });
 
-        const { kode_cpmk, deskripsi } = req.body;
+        const { kode_cpmk, deskripsi, external_id } = req.body;
         const existing = await prisma.cpmk.findUnique({ where: { id } });
         if (!existing) return res.status(404).json({ message: "CPMK tidak ditemukan." });
 
@@ -51,12 +51,16 @@ exports.updateCpmk = async (req, res) => {
             where: { id },
             data: {
                 kode_cpmk: isNonEmptyString(kode_cpmk) ? kode_cpmk : existing.kode_cpmk,
-                deskripsi: isNonEmptyString(deskripsi) ? deskripsi : existing.deskripsi
+                deskripsi: isNonEmptyString(deskripsi) ? deskripsi : existing.deskripsi,
+                external_id: external_id !== undefined ? (isNonEmptyString(external_id) ? external_id : null) : existing.external_id
             }
         });
         res.status(200).json({ message: "CPMK berhasil diperbarui.", data: updated });
     } catch (error) {
-        if (error.code === 'P2002') return res.status(409).json({ message: "Kode CPMK ini sudah terdaftar untuk mata kuliah tersebut." });
+        if (error.code === 'P2002') {
+            const isExternalIdConflict = error.meta?.target?.includes?.('external_id');
+            return res.status(409).json({ message: isExternalIdConflict ? "external_id ini sudah dipakai CPMK lain." : "Kode CPMK ini sudah terdaftar untuk mata kuliah tersebut." });
+        }
         res.status(500).json({ message: "Gagal memperbarui CPMK." });
     }
 };
@@ -101,7 +105,7 @@ exports.updateSubCpmk = async (req, res) => {
         const id = toPositiveInt(req.params.id);
         if (!id) return res.status(400).json({ message: "ID Sub-CPMK tidak valid." });
 
-        const { kode_sub_cpmk, deskripsi } = req.body;
+        const { kode_sub_cpmk, deskripsi, external_id } = req.body;
         const existing = await prisma.sub_cpmk.findUnique({ where: { id } });
         if (!existing) return res.status(404).json({ message: "Sub-CPMK tidak ditemukan." });
 
@@ -109,12 +113,16 @@ exports.updateSubCpmk = async (req, res) => {
             where: { id },
             data: {
                 kode_sub_cpmk: isNonEmptyString(kode_sub_cpmk) ? kode_sub_cpmk : existing.kode_sub_cpmk,
-                deskripsi: isNonEmptyString(deskripsi) ? deskripsi : existing.deskripsi
+                deskripsi: isNonEmptyString(deskripsi) ? deskripsi : existing.deskripsi,
+                external_id: external_id !== undefined ? (isNonEmptyString(external_id) ? external_id : null) : existing.external_id
             }
         });
         res.status(200).json({ message: "Sub-CPMK berhasil diperbarui.", data: updated });
     } catch (error) {
-        if (error.code === 'P2002') return res.status(409).json({ message: "Kode Sub-CPMK ini sudah terdaftar untuk CPMK tersebut." });
+        if (error.code === 'P2002') {
+            const isExternalIdConflict = error.meta?.target?.includes?.('external_id');
+            return res.status(409).json({ message: isExternalIdConflict ? "external_id ini sudah dipakai Sub-CPMK lain." : "Kode Sub-CPMK ini sudah terdaftar untuk CPMK tersebut." });
+        }
         res.status(500).json({ message: "Gagal memperbarui Sub-CPMK." });
     }
 };

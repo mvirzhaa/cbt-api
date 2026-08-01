@@ -4,30 +4,53 @@ const { toPositiveInt, isNonEmptyString } = require('../utils/helpers');
 const siakadQueueService = require('../services/siakadQueueService');
 const siakadClient = require('../services/siakadClient');
 
-const buildJobFromAttempt = (attempt) => ({
-    attempt_id: attempt.id,
-    nim: attempt.users.nim,
-    kode_mk: attempt.exams.kode_mk,
-    siakad_kelas_kuliah_id: attempt.exams.siakad_kelas_kuliah_id,
-    siakad_periode_akademik_id: attempt.exams.siakad_periode_akademik_id,
-    komponen_nilai: {
-        skor_pilgan_100: parseFloat(attempt.skor_pilgan_100 || 0),
-        skor_esai_100: parseFloat(attempt.skor_esai_100 || 0),
-        skor_file_100: parseFloat(attempt.skor_file_100 || 0),
-        final_score: attempt.final_score !== null ? parseFloat(attempt.final_score) : null
-    }
-});
+/**
+ * Susun 1 job queue dari 1 exam_attempt: breakdown per soal (skor + mapping
+ * ke CPMK/Sub-CPMK external_id) + nilai akhir. Soal tanpa cpmk_id/sub_cpmk_id
+ * yang punya external_id (belum dipetakan / belum di-sync ke SIAKAD) diskip
+ * dari breakdown — sama seperti perilaku dev tool SIAKAD sendiri, bukan
+ * dianggap error.
+ */
+const buildJobFromAttempt = async (attempt) => {
+    const responses = await prisma.student_responses.findMany({
+        where: { user_id: attempt.user_id, exam_id: attempt.exam_id, skor: { not: null } },
+        include: { questions: { include: { cpmk_ref: true, sub_cpmk_ref: true } } }
+    });
+
+    const breakdown = responses
+        .map(r => {
+            const externalId = r.questions.sub_cpmk_ref?.external_id || r.questions.cpmk_ref?.external_id || null;
+            const skorMaksimal = parseFloat(r.questions.bobot_nilai || 0);
+            return {
+                skorDiperoleh: parseFloat(r.skor || 0),
+                skorMaksimal,
+                pemetaanCpmk: externalId ? [{ cpmkId: externalId, bobotPoin: skorMaksimal }] : []
+            };
+        })
+        .filter(unit => unit.pemetaanCpmk.length > 0);
+
+    return {
+        attempt_id: attempt.id,
+        nim: attempt.users.nim,
+        kelas_kuliah_id: attempt.exams.siakad_kelas_kuliah_id,
+        rencana_evaluasi_id: attempt.exams.siakad_rencana_evaluasi_id,
+        final_score: attempt.final_score !== null ? parseFloat(attempt.final_score) : 0,
+        breakdown
+    };
+};
 
 // ============================================================
 // PUT /api/siakad/exams/:exam_id/target
-// Set target kelas & periode SIAKAD untuk satu ujian (sekali per exam)
+// Set target kelas, periode & komponen (rencana evaluasi) SIAKAD untuk satu
+// ujian (sekali per exam; rencana_evaluasi_id boleh menyusul belakangan
+// setelah dosen lihat opsinya lewat GET /api/siakad/rencana-evaluasi)
 // ============================================================
 exports.setExamSiakadTarget = async (req, res) => {
     try {
         const examId = toPositiveInt(req.params.exam_id);
         if (!examId) return res.status(400).json({ message: "ID ujian tidak valid." });
 
-        const { siakad_kelas_kuliah_id, siakad_periode_akademik_id } = req.body;
+        const { siakad_kelas_kuliah_id, siakad_periode_akademik_id, siakad_rencana_evaluasi_id } = req.body;
         if (!isNonEmptyString(siakad_kelas_kuliah_id) || !isNonEmptyString(siakad_periode_akademik_id)) {
             return res.status(400).json({ message: "siakad_kelas_kuliah_id dan siakad_periode_akademik_id wajib diisi." });
         }
@@ -40,14 +63,21 @@ exports.setExamSiakadTarget = async (req, res) => {
 
         const updated = await prisma.exams.update({
             where: { id: examId },
-            data: { siakad_kelas_kuliah_id, siakad_periode_akademik_id }
+            data: {
+                siakad_kelas_kuliah_id,
+                siakad_periode_akademik_id,
+                siakad_rencana_evaluasi_id: siakad_rencana_evaluasi_id !== undefined
+                    ? (isNonEmptyString(siakad_rencana_evaluasi_id) ? siakad_rencana_evaluasi_id : null)
+                    : exam.siakad_rencana_evaluasi_id
+            }
         });
 
         res.status(200).json({
             message: "Target SIAKAD berhasil disimpan.",
             data: {
                 siakad_kelas_kuliah_id: updated.siakad_kelas_kuliah_id,
-                siakad_periode_akademik_id: updated.siakad_periode_akademik_id
+                siakad_periode_akademik_id: updated.siakad_periode_akademik_id,
+                siakad_rencana_evaluasi_id: updated.siakad_rencana_evaluasi_id
             }
         });
     } catch (error) {
@@ -79,6 +109,9 @@ exports.pushAttempt = async (req, res) => {
         if (!attempt.exams.siakad_kelas_kuliah_id || !attempt.exams.siakad_periode_akademik_id) {
             return res.status(400).json({ message: "Set target kelas SIAKAD untuk ujian ini terlebih dahulu." });
         }
+        if (!attempt.exams.siakad_rencana_evaluasi_id) {
+            return res.status(400).json({ message: "Set rencanaEvaluasiId (komponen SIAKAD) untuk ujian ini terlebih dahulu — lihat GET /api/siakad/rencana-evaluasi." });
+        }
         if (!attempt.users.nim) {
             return res.status(400).json({ message: "Mahasiswa ini belum memiliki NIM, tidak bisa disinkronkan ke SIAKAD." });
         }
@@ -88,7 +121,8 @@ exports.pushAttempt = async (req, res) => {
             data: { siakad_sync_status: 'ANTRIAN', siakad_error: null }
         });
 
-        siakadQueueService.addToQueue(buildJobFromAttempt(attempt));
+        const job = await buildJobFromAttempt(attempt);
+        siakadQueueService.addToQueue(job);
 
         res.status(200).json({ message: "Nilai masuk antrian pengiriman ke SIAKAD." });
     } catch (error) {
@@ -114,6 +148,9 @@ exports.pushExamAttempts = async (req, res) => {
         if (!exam.siakad_kelas_kuliah_id || !exam.siakad_periode_akademik_id) {
             return res.status(400).json({ message: "Set target kelas SIAKAD untuk ujian ini terlebih dahulu." });
         }
+        if (!exam.siakad_rencana_evaluasi_id) {
+            return res.status(400).json({ message: "Set rencanaEvaluasiId (komponen SIAKAD) untuk ujian ini terlebih dahulu — lihat GET /api/siakad/rencana-evaluasi." });
+        }
 
         const attempts = await prisma.exam_attempts.findMany({
             where: { exam_id: examId, status: 'SELESAI' },
@@ -128,7 +165,8 @@ exports.pushExamAttempts = async (req, res) => {
             data: { siakad_sync_status: 'ANTRIAN', siakad_error: null }
         });
 
-        eligible.forEach(attempt => siakadQueueService.addToQueue(buildJobFromAttempt(attempt)));
+        const jobs = await Promise.all(eligible.map(buildJobFromAttempt));
+        jobs.forEach(job => siakadQueueService.addToQueue(job));
 
         res.status(200).json({
             message: `${eligible.length} nilai masuk antrian pengiriman ke SIAKAD.${skippedNoNim > 0 ? ` ${skippedNoNim} dilewati karena mahasiswa belum punya NIM.` : ''}`,
@@ -138,6 +176,99 @@ exports.pushExamAttempts = async (req, res) => {
     } catch (error) {
         console.error("❌ ERROR PUSH EXAM ATTEMPTS:", error);
         res.status(500).json({ message: "Gagal push nilai ujian ke SIAKAD." });
+    }
+};
+
+// ============================================================
+// GET /api/siakad/rencana-evaluasi?kode_mk=&periode_id=
+// Proxy Rencana Evaluasi (daftar komponen + master CPMK/Sub-CPMK) dari
+// SIAKAD, supaya dosen bisa lihat rencanaEvaluasiId mana yang mau dipakai
+// sebagai target sebelum PUT /exams/:exam_id/target.
+// ============================================================
+exports.getRencanaEvaluasi = async (req, res) => {
+    try {
+        const kodeMk = req.query.kode_mk;
+        const periodeId = req.query.periode_id;
+        if (!isNonEmptyString(kodeMk) || !isNonEmptyString(periodeId)) {
+            return res.status(400).json({ message: "kode_mk dan periode_id wajib diisi." });
+        }
+
+        const mk = await prisma.mata_kuliah.findUnique({ where: { kode_mk: kodeMk } });
+        if (!mk) return res.status(404).json({ message: "Mata kuliah tidak ditemukan." });
+        if (!mk.siakad_id) return res.status(400).json({ message: "Mata kuliah ini belum dipetakan ke SIAKAD (mata_kuliah.siakad_id kosong)." });
+
+        const result = await siakadClient.getRencanaEvaluasi(mk.siakad_id, periodeId);
+        if (!result.success) {
+            return res.status(502).json({ message: `Gagal mengambil Rencana Evaluasi dari SIAKAD: ${result.message}` });
+        }
+
+        res.status(200).json({ data: result.data });
+    } catch (error) {
+        console.error("❌ ERROR GET SIAKAD RENCANA EVALUASI:", error);
+        res.status(500).json({ message: "Gagal mengambil Rencana Evaluasi dari SIAKAD." });
+    }
+};
+
+// ============================================================
+// POST /api/siakad/mata-kuliah/:kode_mk/sync-cpmk?periode_id=
+// Auto-isi cpmk.external_id / sub_cpmk.external_id lokal dengan mencocokkan
+// kode_cpmk/kode_sub_cpmk lokal terhadap masterCpmk dari Rencana Evaluasi
+// SIAKAD (exact match, case-insensitive). Yang tidak cocok dilaporkan biar
+// bisa diisi manual lewat PUT /api/cpmk/:id / /api/sub-cpmk/:id.
+// ============================================================
+exports.syncCpmkExternalIds = async (req, res) => {
+    try {
+        const kodeMk = req.params.kode_mk;
+        const periodeId = req.query.periode_id;
+        if (!isNonEmptyString(kodeMk)) return res.status(400).json({ message: "kode_mk tidak valid." });
+        if (!isNonEmptyString(periodeId)) return res.status(400).json({ message: "periode_id wajib diisi (query param)." });
+
+        const mk = await prisma.mata_kuliah.findUnique({ where: { kode_mk: kodeMk } });
+        if (!mk) return res.status(404).json({ message: "Mata kuliah tidak ditemukan." });
+        if (!mk.siakad_id) return res.status(400).json({ message: "Mata kuliah ini belum dipetakan ke SIAKAD (mata_kuliah.siakad_id kosong)." });
+
+        const result = await siakadClient.getRencanaEvaluasi(mk.siakad_id, periodeId);
+        if (!result.success) {
+            return res.status(502).json({ message: `Gagal mengambil Rencana Evaluasi dari SIAKAD: ${result.message}` });
+        }
+
+        const masterCpmk = result.data?.masterCpmk || [];
+        const localCpmkList = await prisma.cpmk.findMany({ where: { kode_mk: kodeMk }, include: { sub_cpmk: true } });
+
+        const matched = [];
+        const unmatched = [];
+
+        for (const parent of masterCpmk) {
+            const localParent = localCpmkList.find(c => c.kode_cpmk.toLowerCase() === (parent.kode || '').toLowerCase());
+
+            if (!localParent) {
+                unmatched.push({ type: 'CPMK', kode: parent.kode });
+            } else if (parent.id && localParent.external_id !== parent.id) {
+                await prisma.cpmk.update({ where: { id: localParent.id }, data: { external_id: parent.id } });
+                matched.push({ type: 'CPMK', kode: parent.kode, external_id: parent.id });
+            }
+
+            const subs = parent.subCpmk || parent.sub_cpmk || [];
+            for (const sub of subs) {
+                const localSub = localParent?.sub_cpmk.find(s => s.kode_sub_cpmk.toLowerCase() === (sub.kode || '').toLowerCase());
+
+                if (!localSub) {
+                    unmatched.push({ type: 'Sub-CPMK', kode: sub.kode });
+                } else if (sub.id && localSub.external_id !== sub.id) {
+                    await prisma.sub_cpmk.update({ where: { id: localSub.id }, data: { external_id: sub.id } });
+                    matched.push({ type: 'Sub-CPMK', kode: sub.kode, external_id: sub.id });
+                }
+            }
+        }
+
+        res.status(200).json({
+            message: `Sinkronisasi selesai: ${matched.length} dicocokkan, ${unmatched.length} tidak ditemukan di data lokal.`,
+            matched,
+            unmatched
+        });
+    } catch (error) {
+        console.error("❌ ERROR SYNC CPMK EXTERNAL IDS:", error);
+        res.status(500).json({ message: "Gagal sinkronisasi CPMK dengan SIAKAD." });
     }
 };
 

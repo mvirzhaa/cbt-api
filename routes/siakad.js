@@ -10,6 +10,10 @@ router.put('/exams/:exam_id/target', verifyToken, isDosenOrSuperAdmin, siakadCon
 router.post('/attempts/:attempt_id/push', verifyToken, isDosenOrSuperAdmin, siakadController.pushAttempt);
 router.post('/exams/:exam_id/push', verifyToken, isDosenOrSuperAdmin, siakadController.pushExamAttempts);
 
+// Rencana Evaluasi & sinkronisasi CPMK (setup sebelum push nilai)
+router.get('/rencana-evaluasi', verifyToken, isDosenOrSuperAdmin, siakadController.getRencanaEvaluasi);
+router.post('/mata-kuliah/:kode_mk/sync-cpmk', verifyToken, isDosenOrSuperAdmin, siakadController.syncCpmkExternalIds);
+
 // Pull mata kuliah (untuk picker di form matkul lokal)
 router.get('/matakuliah', verifyToken, isAdmin, siakadController.searchMataKuliah);
 

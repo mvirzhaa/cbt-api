@@ -9,8 +9,8 @@ exports.getQuestions = async (req, res) => {
         const myExams = await prisma.exams.findMany({ where: { kode_dosen: req.user.id.toString() }, select: { id: true } });
         const myExamIds = myExams.map(e => e.id);
 
-        const questions = await prisma.questions.findMany({ 
-            where: { exam_id: { in: myExamIds } }, include: { question_options: true } 
+        const questions = await prisma.questions.findMany({
+            where: { exam_id: { in: myExamIds } }, include: { question_options: true, cpmk_ref: true, sub_cpmk_ref: true }
         });
 
         const formattedData = questions.map(q => ({
@@ -21,6 +21,12 @@ exports.getQuestions = async (req, res) => {
             kunci_jawaban: q.kunci_jawaban,
             bobot_nilai: q.bobot_nilai,
             cpmk: q.cpmk,
+            cpmk_id: q.cpmk_id,
+            sub_cpmk_id: q.sub_cpmk_id,
+            // Petunjuk kesiapan push nilai ke SIAKAD (Jalur D): soal ini butuh cpmk_id
+            // ATAU sub_cpmk_id yang punya external_id terisi (lihat siakadController.js
+            // buildJobFromAttempt), kalau tidak breakdown-nya di-skip pas dikirim.
+            siakad_ready: !!(q.sub_cpmk_ref?.external_id || q.cpmk_ref?.external_id),
             // Return options for both TIPE_1 and TIPE_2
             opsi_jawaban: (q.tipe_soal === 'TIPE_1' || q.tipe_soal === 'TIPE_2')
                 ? JSON.stringify(q.question_options.map(opt => opt.teks_pilihan))
@@ -35,7 +41,7 @@ exports.getQuestions = async (req, res) => {
 
 exports.createQuestion = async (req, res) => {
     try {
-        const { exam_id, tipe_soal, isi_soal, opsi_jawaban, kunci_jawaban, bobot_nilai, cpmk } = req.body;
+        const { exam_id, tipe_soal, isi_soal, opsi_jawaban, kunci_jawaban, bobot_nilai, cpmk, cpmk_id, sub_cpmk_id } = req.body;
         const examId = toPositiveInt(exam_id);
 
         // DEBUG: Log semua input yang masuk
@@ -108,6 +114,8 @@ exports.createQuestion = async (req, res) => {
             data: {
                 exam_id: examId,
                 cpmk: cpmk || "CPMK-1",
+                cpmk_id: toPositiveInt(cpmk_id) || null,
+                sub_cpmk_id: toPositiveInt(sub_cpmk_id) || null,
                 tipe_soal,
                 isi_soal,
                 kunci_jawaban: kunci_jawaban || null,
@@ -137,7 +145,7 @@ exports.updateQuestion = async (req, res) => {
         const questionId = toPositiveInt(req.params.id);
         if (!questionId) return res.status(400).json({ message: "ID soal tidak valid." });
 
-        const { tipe_soal, isi_soal, opsi_jawaban, kunci_jawaban, bobot_nilai, cpmk } = req.body;
+        const { tipe_soal, isi_soal, opsi_jawaban, kunci_jawaban, bobot_nilai, cpmk, cpmk_id, sub_cpmk_id } = req.body;
         if (tipe_soal && !ALLOWED_QUESTION_TYPES.has(tipe_soal)) {
             return res.status(400).json({ message: "tipe_soal tidak valid." });
         }
@@ -169,7 +177,9 @@ exports.updateQuestion = async (req, res) => {
                 isi_soal: isi_soal || question.isi_soal,
                 kunci_jawaban: kunci_jawaban === undefined ? question.kunci_jawaban : kunci_jawaban,
                 bobot_nilai: bobot_nilai === undefined ? question.bobot_nilai : parsedBobot,
-                cpmk: cpmk || question.cpmk
+                cpmk: cpmk || question.cpmk,
+                cpmk_id: cpmk_id === undefined ? question.cpmk_id : (toPositiveInt(cpmk_id) || null),
+                sub_cpmk_id: sub_cpmk_id === undefined ? question.sub_cpmk_id : (toPositiveInt(sub_cpmk_id) || null)
             }
         });
 
