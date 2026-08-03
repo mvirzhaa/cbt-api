@@ -36,6 +36,14 @@ function warnStubOnce() {
     }
 }
 
+// Node's fetch() cuma kasih "fetch failed" generik di error.message kalau
+// gagal level jaringan (DNS/connection refused/TLS/dll) — alasan aslinya
+// (ENOTFOUND, ECONNREFUSED, dst) disimpan di error.cause, bukan message.
+function describeFetchError(error) {
+    const causeDetail = error?.cause?.code || error?.cause?.message || (error?.cause ? String(error.cause) : null);
+    return causeDetail ? `${error.message} (${causeDetail})` : error.message;
+}
+
 async function simulate(label, extra = {}) {
     warnStubOnce();
     console.log(`[SIAKAD Client] 🧪 [STUB] Simulasi ${label}`);
@@ -54,11 +62,16 @@ async function login() {
         throw new Error('SIAKAD_ADMIN_USERNAME / SIAKAD_ADMIN_PASSWORD belum diset di environment.');
     }
 
-    const response = await fetch(`${hostBaseUrl()}/api/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password })
-    });
+    let response;
+    try {
+        response = await fetch(`${hostBaseUrl()}/api/auth/login`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, password })
+        });
+    } catch (error) {
+        throw new Error(`Tidak bisa connect ke SIAKAD (${hostBaseUrl()}): ${describeFetchError(error)}`);
+    }
 
     const json = await response.json().catch(() => null);
     if (!response.ok || !json?.data?.token) {
@@ -121,7 +134,7 @@ async function authedRequest(method, path, body, { retryOn401 = true } = {}) {
 
         return { success: true, data: json?.data ?? json };
     } catch (error) {
-        return { success: false, message: error.message };
+        return { success: false, message: describeFetchError(error) };
     }
 }
 
