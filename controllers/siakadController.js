@@ -372,16 +372,16 @@ exports.syncCpmkExternalIds = async (req, res) => {
 // ============================================================
 exports.searchMataKuliah = async (req, res) => {
     try {
-        const page = toPositiveInt(req.query.page) || 1;
         const size = toPositiveInt(req.query.size) || 100;
+        const search = isNonEmptyString(req.query.search) ? req.query.search : undefined;
 
-        const result = await siakadClient.searchMataKuliah({ page, size });
+        const result = await siakadClient.searchMataKuliah({ size, search });
 
         if (!result.success) {
             return res.status(502).json({ message: `Gagal mengambil data mata kuliah dari SIAKAD: ${result.message}` });
         }
 
-        res.status(200).json({ data: result.data, pagination: result.pagination });
+        res.status(200).json({ data: result.data });
     } catch (error) {
         console.error("❌ ERROR SEARCH SIAKAD MATAKULIAH:", error);
         res.status(500).json({ message: "Gagal mengambil data mata kuliah dari SIAKAD." });

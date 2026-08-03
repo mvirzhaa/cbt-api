@@ -184,22 +184,35 @@ exports.pushNilaiAkhir = async (daftarNilai) => {
 };
 
 /**
- * Cari/daftar mata kuliah dari SIAKAD (endpoint publik, tanpa auth).
- * @param {object} params - { page, size }
- * @returns {Promise<{ success: boolean, data?: object[], pagination?: object, message?: string }>}
+ * Ekstrak array data dari response yang bentuk bungkusnya beda-beda per
+ * endpoint SIAKAD (data langsung array / data.rows / data.items / dst) —
+ * pola sama seperti cariArrayUtkTabel() di index (2).html, supaya tidak
+ * salah asumsi bentuk response.
  */
-exports.searchMataKuliah = async ({ page = 1, size = 100 } = {}) => {
-    try {
-        const response = await fetch(`${hostBaseUrl()}/api/public/mata-kuliah?page=${page}&size=${size}`);
-
-        if (!response.ok) {
-            const text = await response.text().catch(() => '');
-            return { success: false, message: `SIAKAD HTTP ${response.status}: ${text || response.statusText}` };
-        }
-
-        const json = await response.json();
-        return { success: true, data: json.data || [], pagination: json.pagination || null };
-    } catch (error) {
-        return { success: false, message: error.message };
+function extractArray(payload) {
+    const kandidat = [payload, payload?.data, payload?.rows, payload?.items];
+    for (const k of kandidat) {
+        if (Array.isArray(k)) return k;
     }
+    return [];
+}
+
+/**
+ * Cari/daftar mata kuliah dari SIAKAD — GET /mata-kuliah (di bawah prefix
+ * /api/akademik, BUTUH Bearer token). Dikonfirmasi dari getMataKuliah() di
+ * index (2).html (baseUrl default-nya sudah termasuk /api/akademik, dan
+ * panggil() selalu kirim Authorization header) — BUKAN endpoint publik.
+ * @param {object} params - { size, search, tahunKurikulumId }
+ */
+exports.searchMataKuliah = async ({ size = 100, search, tahunKurikulumId } = {}) => {
+    if (isStubMode()) {
+        return simulate(`GET mata-kuliah search=${search || ''}`, { data: [] });
+    }
+    const query = new URLSearchParams({ size: String(size) });
+    if (search) query.set('search', search);
+    if (tahunKurikulumId) query.set('tahunKurikulumId', tahunKurikulumId);
+
+    const result = await authedRequest('GET', `/mata-kuliah?${query.toString()}`);
+    if (!result.success) return result;
+    return { success: true, data: extractArray(result.data) };
 };
