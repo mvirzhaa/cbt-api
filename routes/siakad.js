@@ -6,6 +6,17 @@ const siakadQueueService = require('../services/siakadQueueService');
 
 // Base URL: /api/siakad
 
+// Dipakai bareng oleh picker matkul di ManageMatkul.jsx (dosen) DAN
+// AdminDashboard.jsx (admin) — read-only proxy pencarian, jadi digerbang
+// admin/dosen/super_admin, bukan cuma isAdmin (yang bikin dosen selalu 403).
+const isAdminOrDosen = (req, res, next) => {
+    if (!req.user) return res.status(401).json({ message: "Harus login terlebih dahulu!" });
+    if (!['admin', 'dosen', 'super_admin'].includes(req.user.role)) {
+        return res.status(403).json({ message: "Akses Ditolak! Fitur ini khusus Admin/Dosen." });
+    }
+    next();
+};
+
 router.put('/exams/:exam_id/target', verifyToken, isDosenOrSuperAdmin, siakadController.setExamSiakadTarget);
 router.post('/attempts/:attempt_id/push', verifyToken, isDosenOrSuperAdmin, siakadController.pushAttempt);
 router.post('/exams/:exam_id/push', verifyToken, isDosenOrSuperAdmin, siakadController.pushExamAttempts);
@@ -19,7 +30,7 @@ router.get('/mata-kuliah/:kode_mk/pemetaan-cpmk', verifyToken, isDosenOrSuperAdm
 router.post('/mata-kuliah/:kode_mk/resolve-cpmk', verifyToken, isDosenOrSuperAdmin, siakadController.resolveCpmkFromSiakad);
 
 // Pull mata kuliah (untuk picker di form matkul lokal)
-router.get('/matakuliah', verifyToken, isAdmin, siakadController.searchMataKuliah);
+router.get('/matakuliah', verifyToken, isAdminOrDosen, siakadController.searchMataKuliah);
 
 // Queue Management (mirror pola AI queue di routes/grading.js)
 router.get('/queue/status', verifyToken, (req, res) => {
