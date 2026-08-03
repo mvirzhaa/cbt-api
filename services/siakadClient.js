@@ -131,6 +131,20 @@ exports.getRencanaEvaluasi = async (mkSiakadId, periodeId) => {
 };
 
 /**
+ * GET Pemetaan CPMK (hierarki CPMK -> Sub-CPMK lengkap kode+deskripsi) satu
+ * MK — sumber data buat picker "pilih Sub-CPMK langsung dari SIAKAD" saat
+ * bikin soal (beda dari masterCpmk di getRencanaEvaluasi yang cuma id+kode,
+ * tidak punya deskripsi, dan minta periodeId).
+ * @param {string} mkSiakadId - mata_kuliah.siakad_id (uuid SIAK, bukan kode_mk lokal)
+ */
+exports.getPemetaanCpmk = async (mkSiakadId) => {
+    if (isStubMode()) {
+        return simulate(`GET pemetaan-cpmk mkSiakadId=${mkSiakadId}`, { data: { cplHeaders: [], cpmkData: [] } });
+    }
+    return authedRequest('GET', `/obe/mata-kuliah/${mkSiakadId}/pemetaan-cpmk`);
+};
+
+/**
  * GET peserta kelas (utk resolve NIM -> krsId sebelum push nilai).
  * @param {string} kelasId - exams.siakad_kelas_kuliah_id
  * @returns {Promise<{success:boolean, data?: Array<{rincianKrsId, nim, nama}>, message?:string}>}

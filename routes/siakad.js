@@ -14,6 +14,10 @@ router.post('/exams/:exam_id/push', verifyToken, isDosenOrSuperAdmin, siakadCont
 router.get('/rencana-evaluasi', verifyToken, isDosenOrSuperAdmin, siakadController.getRencanaEvaluasi);
 router.post('/mata-kuliah/:kode_mk/sync-cpmk', verifyToken, isDosenOrSuperAdmin, siakadController.syncCpmkExternalIds);
 
+// Pemetaan CPMK live (picker Sub-CPMK saat bikin soal) & auto-provision
+router.get('/mata-kuliah/:kode_mk/pemetaan-cpmk', verifyToken, isDosenOrSuperAdmin, siakadController.getPemetaanCpmk);
+router.post('/mata-kuliah/:kode_mk/resolve-cpmk', verifyToken, isDosenOrSuperAdmin, siakadController.resolveCpmkFromSiakad);
+
 // Pull mata kuliah (untuk picker di form matkul lokal)
 router.get('/matakuliah', verifyToken, isAdmin, siakadController.searchMataKuliah);
 

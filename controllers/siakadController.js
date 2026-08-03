@@ -210,6 +210,100 @@ exports.getRencanaEvaluasi = async (req, res) => {
 };
 
 // ============================================================
+// GET /api/siakad/mata-kuliah/:kode_mk/pemetaan-cpmk
+// Proxy Pemetaan CPMK (hierarki CPMK -> Sub-CPMK lengkap kode+deskripsi)
+// dari SIAKAD — sumber data buat picker "pilih Sub-CPMK langsung dari
+// SIAKAD" saat bikin soal, tanpa perlu bikin cpmk/sub_cpmk lokal manual
+// duluan (lihat resolveCpmkFromSiakad di bawah).
+// ============================================================
+exports.getPemetaanCpmk = async (req, res) => {
+    try {
+        const kodeMk = req.params.kode_mk;
+        if (!isNonEmptyString(kodeMk)) return res.status(400).json({ message: "kode_mk tidak valid." });
+
+        const mk = await prisma.mata_kuliah.findUnique({ where: { kode_mk: kodeMk } });
+        if (!mk) return res.status(404).json({ message: "Mata kuliah tidak ditemukan." });
+        if (!mk.siakad_id) return res.status(400).json({ message: "Mata kuliah ini belum dipetakan ke SIAKAD (mata_kuliah.siakad_id kosong)." });
+
+        const result = await siakadClient.getPemetaanCpmk(mk.siakad_id);
+        if (!result.success) {
+            return res.status(502).json({ message: `Gagal mengambil Pemetaan CPMK dari SIAKAD: ${result.message}` });
+        }
+
+        res.status(200).json({ data: result.data });
+    } catch (error) {
+        console.error("❌ ERROR GET SIAKAD PEMETAAN CPMK:", error);
+        res.status(500).json({ message: "Gagal mengambil Pemetaan CPMK dari SIAKAD." });
+    }
+};
+
+// ============================================================
+// POST /api/siakad/mata-kuliah/:kode_mk/resolve-cpmk
+// Auto-provision cpmk/sub_cpmk lokal dari 1 item yang dipilih dosen di
+// picker Sub-CPMK SIAKAD (data dari getPemetaanCpmk di atas). Upsert by
+// kode (bukan create-terus-gagal-kalau-sudah-ada), supaya dosen tidak
+// perlu bikin cpmk/sub_cpmk lokal manual duluan — cukup pilih dari SIAKAD,
+// row lokal dibuat/dipakai ulang di belakang layar.
+// ============================================================
+exports.resolveCpmkFromSiakad = async (req, res) => {
+    try {
+        const kodeMk = req.params.kode_mk;
+        if (!isNonEmptyString(kodeMk)) return res.status(400).json({ message: "kode_mk tidak valid." });
+
+        const { cpmk, sub_cpmk } = req.body;
+        if (!cpmk || !isNonEmptyString(cpmk.kode)) {
+            return res.status(400).json({ message: "cpmk.kode wajib diisi." });
+        }
+
+        const mk = await prisma.mata_kuliah.findUnique({ where: { kode_mk: kodeMk } });
+        if (!mk) return res.status(404).json({ message: "Mata kuliah tidak ditemukan." });
+
+        const cpmkRow = await prisma.cpmk.upsert({
+            where: { kode_mk_kode_cpmk: { kode_mk: kodeMk, kode_cpmk: cpmk.kode } },
+            update: {
+                external_id: cpmk.external_id || undefined,
+                deskripsi: isNonEmptyString(cpmk.deskripsi) ? cpmk.deskripsi : undefined
+            },
+            create: {
+                kode_mk: kodeMk,
+                kode_cpmk: cpmk.kode,
+                deskripsi: isNonEmptyString(cpmk.deskripsi) ? cpmk.deskripsi : cpmk.kode,
+                external_id: cpmk.external_id || null
+            }
+        });
+
+        let subCpmkRow = null;
+        if (sub_cpmk && isNonEmptyString(sub_cpmk.kode)) {
+            subCpmkRow = await prisma.sub_cpmk.upsert({
+                where: { cpmk_id_kode_sub_cpmk: { cpmk_id: cpmkRow.id, kode_sub_cpmk: sub_cpmk.kode } },
+                update: {
+                    external_id: sub_cpmk.external_id || undefined,
+                    deskripsi: isNonEmptyString(sub_cpmk.deskripsi) ? sub_cpmk.deskripsi : undefined
+                },
+                create: {
+                    cpmk_id: cpmkRow.id,
+                    kode_sub_cpmk: sub_cpmk.kode,
+                    deskripsi: isNonEmptyString(sub_cpmk.deskripsi) ? sub_cpmk.deskripsi : sub_cpmk.kode,
+                    external_id: sub_cpmk.external_id || null
+                }
+            });
+        }
+
+        res.status(200).json({
+            message: "CPMK/Sub-CPMK berhasil disiapkan.",
+            data: { cpmk_id: cpmkRow.id, sub_cpmk_id: subCpmkRow ? subCpmkRow.id : null }
+        });
+    } catch (error) {
+        if (error.code === 'P2002') {
+            const isExternalIdConflict = error.meta?.target?.includes?.('external_id');
+            return res.status(409).json({ message: isExternalIdConflict ? "external_id ini sudah dipakai CPMK/Sub-CPMK lain." : "Kode CPMK/Sub-CPMK ini sudah terdaftar." });
+        }
+        console.error("❌ ERROR RESOLVE CPMK FROM SIAKAD:", error);
+        res.status(500).json({ message: "Gagal menyiapkan CPMK/Sub-CPMK dari SIAKAD." });
+    }
+};
+
+// ============================================================
 // POST /api/siakad/mata-kuliah/:kode_mk/sync-cpmk?periode_id=
 // Auto-isi cpmk.external_id / sub_cpmk.external_id lokal dengan mencocokkan
 // kode_cpmk/kode_sub_cpmk lokal terhadap masterCpmk dari Rencana Evaluasi
