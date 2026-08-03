@@ -82,38 +82,47 @@ async function getToken({ forceRefresh = false } = {}) {
 /**
  * Panggil endpoint /api/akademik/... dengan Bearer token, retry 1x setelah
  * re-login kalau kena 401 (token expired/invalid di sisi server).
+ * Dibungkus try/catch di level ini (bukan cuma di controller) supaya
+ * kegagalan login() (kredensial salah, host tidak reachable, dll) balik
+ * sebagai {success:false, message} yang bisa ditampilkan ke user (lewat
+ * controller -> 502 dengan pesan asli), bukan nge-throw sampai jadi 500
+ * generik tanpa detail.
  */
 async function authedRequest(method, path, body, { retryOn401 = true } = {}) {
-    const token = await getToken();
+    try {
+        const token = await getToken();
 
-    const doFetch = async (bearer) => {
-        const res = await fetch(`${hostBaseUrl()}${AKADEMIK_PREFIX}${path}`, {
-            method,
-            headers: {
-                'Content-Type': 'application/json',
-                Authorization: `Bearer ${bearer}`
-            },
-            body: body !== undefined ? JSON.stringify(body) : undefined
-        });
-        const text = await res.text();
-        let json;
-        try { json = text ? JSON.parse(text) : null; } catch (e) { json = text; }
-        return { res, json };
-    };
+        const doFetch = async (bearer) => {
+            const res = await fetch(`${hostBaseUrl()}${AKADEMIK_PREFIX}${path}`, {
+                method,
+                headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${bearer}`
+                },
+                body: body !== undefined ? JSON.stringify(body) : undefined
+            });
+            const text = await res.text();
+            let json;
+            try { json = text ? JSON.parse(text) : null; } catch (e) { json = text; }
+            return { res, json };
+        };
 
-    let { res, json } = await doFetch(token);
+        let { res, json } = await doFetch(token);
 
-    if (res.status === 401 && retryOn401) {
-        const freshToken = await getToken({ forceRefresh: true });
-        ({ res, json } = await doFetch(freshToken));
+        if (res.status === 401 && retryOn401) {
+            const freshToken = await getToken({ forceRefresh: true });
+            ({ res, json } = await doFetch(freshToken));
+        }
+
+        if (!res.ok) {
+            const message = (json && json.message) || (typeof json === 'string' ? json : res.statusText);
+            return { success: false, message: `SIAKAD HTTP ${res.status}: ${message}` };
+        }
+
+        return { success: true, data: json?.data ?? json };
+    } catch (error) {
+        return { success: false, message: error.message };
     }
-
-    if (!res.ok) {
-        const message = (json && json.message) || (typeof json === 'string' ? json : res.statusText);
-        return { success: false, message: `SIAKAD HTTP ${res.status}: ${message}` };
-    }
-
-    return { success: true, data: json?.data ?? json };
 }
 
 /**
