@@ -8,6 +8,7 @@ const handleUpload = require('../middlewares/uploadErrorHandler');
 
 // Base URL: /api/student
 router.get('/exams', verifyToken, studentController.getExams);
+router.get('/exams/:id/token', verifyToken, studentController.getExamToken);
 router.post('/verify-token', verifyToken, studentController.verifyToken);
 router.get('/history', verifyToken, studentController.getHistory);
 

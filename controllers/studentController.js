@@ -354,6 +354,41 @@ exports.getHistory = async (req, res) => {
     }
 };
 
+// Info token untuk SATU ujian (dipakai LMS eksternal utk tampilkan token ke mahasiswa
+// otomatis begitu jendela waktu ujian buka, tanpa dosen perlu umumkan manual).
+// token_ujian sengaja null di luar jendela waktu — jaga level proteksi yang sama
+// dengan toleransi 5 menit di verifyToken.
+exports.getExamToken = async (req, res) => {
+    try {
+        const id = parseInt(req.params.id);
+        if (!id) return res.status(400).json({ message: "ID ujian tidak valid." });
+
+        const exam = await prisma.exams.findUnique({
+            where: { id },
+            select: { id: true, nama_ujian: true, waktu_mulai: true, waktu_selesai: true, token_ujian: true }
+        });
+        if (!exam) return res.status(404).json({ message: "Ujian tidak ditemukan." });
+
+        const now = new Date();
+        const waktuMulaiToleransi = new Date(new Date(exam.waktu_mulai).getTime() - (5 * 60000));
+        const isOpen = now >= waktuMulaiToleransi && now <= new Date(exam.waktu_selesai);
+
+        return res.status(200).json({
+            data: {
+                id: exam.id,
+                nama_ujian: exam.nama_ujian,
+                waktu_mulai: exam.waktu_mulai,
+                waktu_selesai: exam.waktu_selesai,
+                is_open: isOpen,
+                token_ujian: isOpen ? exam.token_ujian : null,
+            },
+        });
+    } catch (error) {
+        console.error('[Get Exam Token]', error);
+        res.status(500).json({ message: "Gagal mengambil info token ujian." });
+    }
+};
+
 exports.getExams = async (req, res) => {
     try {
         const exams = await prisma.exams.findMany({
