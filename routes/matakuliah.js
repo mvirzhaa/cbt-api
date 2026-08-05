@@ -5,6 +5,7 @@ const { verifyToken, isAdmin } = require('../middlewares/authMiddleware');
 
 // Base URL: /api/matakuliah
 router.post('/', verifyToken, isAdmin, matakuliahController.createMatakuliah);
+router.post('/import-siakad', verifyToken, isAdmin, matakuliahController.bulkImportFromSiakad);
 router.get('/', verifyToken, matakuliahController.getAllMatakuliah);
 router.put('/:kode_mk', verifyToken, isAdmin, matakuliahController.updateMatakuliah);
 router.delete('/:kode_mk', verifyToken, isAdmin, matakuliahController.deleteMatakuliah);
