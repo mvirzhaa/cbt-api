@@ -21,9 +21,8 @@ router.put('/exams/:exam_id/target', verifyToken, isDosenOrSuperAdmin, siakadCon
 router.post('/attempts/:attempt_id/push', verifyToken, isDosenOrSuperAdmin, siakadController.pushAttempt);
 router.post('/exams/:exam_id/push', verifyToken, isDosenOrSuperAdmin, siakadController.pushExamAttempts);
 
-// Rencana Evaluasi & sinkronisasi CPMK (setup sebelum push nilai)
+// Rencana Evaluasi (setup sebelum push nilai)
 router.get('/rencana-evaluasi', verifyToken, isDosenOrSuperAdmin, siakadController.getRencanaEvaluasi);
-router.post('/mata-kuliah/:kode_mk/sync-cpmk', verifyToken, isDosenOrSuperAdmin, siakadController.syncCpmkExternalIds);
 
 // Pemetaan CPMK live (picker Sub-CPMK saat bikin soal) & auto-provision
 router.get('/mata-kuliah/:kode_mk/pemetaan-cpmk', verifyToken, isDosenOrSuperAdmin, siakadController.getPemetaanCpmk);

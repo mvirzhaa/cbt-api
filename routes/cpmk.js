@@ -4,12 +4,12 @@ const cpmkController = require('../controllers/cpmkController');
 const { verifyToken, isDosenOrSuperAdmin } = require('../middlewares/authMiddleware');
 
 // Base URL: /api/cpmk
+// Tidak ada create/update manual di sini dengan sengaja — satu-satunya cara
+// bikin cpmk/sub_cpmk lokal adalah lewat resolveCpmkFromSiakad (lihat
+// routes/siakad.js), yang meng-copy kode/deskripsi/external_id langsung dari
+// SIAKAD. Menghapus (unlink) tetap boleh, kalau dosen salah pilih.
 router.get('/', verifyToken, isDosenOrSuperAdmin, cpmkController.getCpmk);
-router.post('/', verifyToken, isDosenOrSuperAdmin, cpmkController.createCpmk);
-router.put('/sub-cpmk/:id', verifyToken, isDosenOrSuperAdmin, cpmkController.updateSubCpmk);
 router.delete('/sub-cpmk/:id', verifyToken, isDosenOrSuperAdmin, cpmkController.deleteSubCpmk);
-router.put('/:id', verifyToken, isDosenOrSuperAdmin, cpmkController.updateCpmk);
 router.delete('/:id', verifyToken, isDosenOrSuperAdmin, cpmkController.deleteCpmk);
-router.post('/:cpmk_id/sub-cpmk', verifyToken, isDosenOrSuperAdmin, cpmkController.createSubCpmk);
 
 module.exports = router;

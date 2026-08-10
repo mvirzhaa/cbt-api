@@ -304,69 +304,6 @@ exports.resolveCpmkFromSiakad = async (req, res) => {
 };
 
 // ============================================================
-// POST /api/siakad/mata-kuliah/:kode_mk/sync-cpmk?periode_id=
-// Auto-isi cpmk.external_id / sub_cpmk.external_id lokal dengan mencocokkan
-// kode_cpmk/kode_sub_cpmk lokal terhadap masterCpmk dari Rencana Evaluasi
-// SIAKAD (exact match, case-insensitive). Yang tidak cocok dilaporkan biar
-// bisa diisi manual lewat PUT /api/cpmk/:id / /api/sub-cpmk/:id.
-// ============================================================
-exports.syncCpmkExternalIds = async (req, res) => {
-    try {
-        const kodeMk = req.params.kode_mk;
-        const periodeId = req.query.periode_id;
-        if (!isNonEmptyString(kodeMk)) return res.status(400).json({ message: "kode_mk tidak valid." });
-        if (!isNonEmptyString(periodeId)) return res.status(400).json({ message: "periode_id wajib diisi (query param)." });
-
-        const mk = await prisma.mata_kuliah.findUnique({ where: { kode_mk: kodeMk } });
-        if (!mk) return res.status(404).json({ message: "Mata kuliah tidak ditemukan." });
-        if (!mk.siakad_id) return res.status(400).json({ message: "Mata kuliah ini belum dipetakan ke SIAKAD (mata_kuliah.siakad_id kosong)." });
-
-        const result = await siakadClient.getRencanaEvaluasi(mk.siakad_id, periodeId);
-        if (!result.success) {
-            return res.status(502).json({ message: `Gagal mengambil Rencana Evaluasi dari SIAKAD: ${result.message}` });
-        }
-
-        const masterCpmk = result.data?.masterCpmk || [];
-        const localCpmkList = await prisma.cpmk.findMany({ where: { kode_mk: kodeMk }, include: { sub_cpmk: true } });
-
-        const matched = [];
-        const unmatched = [];
-
-        for (const parent of masterCpmk) {
-            const localParent = localCpmkList.find(c => c.kode_cpmk.toLowerCase() === (parent.kode || '').toLowerCase());
-
-            if (!localParent) {
-                unmatched.push({ type: 'CPMK', kode: parent.kode });
-            } else if (parent.id && localParent.external_id !== parent.id) {
-                await prisma.cpmk.update({ where: { id: localParent.id }, data: { external_id: parent.id } });
-                matched.push({ type: 'CPMK', kode: parent.kode, external_id: parent.id });
-            }
-
-            const subs = parent.subCpmk || parent.sub_cpmk || [];
-            for (const sub of subs) {
-                const localSub = localParent?.sub_cpmk.find(s => s.kode_sub_cpmk.toLowerCase() === (sub.kode || '').toLowerCase());
-
-                if (!localSub) {
-                    unmatched.push({ type: 'Sub-CPMK', kode: sub.kode });
-                } else if (sub.id && localSub.external_id !== sub.id) {
-                    await prisma.sub_cpmk.update({ where: { id: localSub.id }, data: { external_id: sub.id } });
-                    matched.push({ type: 'Sub-CPMK', kode: sub.kode, external_id: sub.id });
-                }
-            }
-        }
-
-        res.status(200).json({
-            message: `Sinkronisasi selesai: ${matched.length} dicocokkan, ${unmatched.length} tidak ditemukan di data lokal.`,
-            matched,
-            unmatched
-        });
-    } catch (error) {
-        console.error("❌ ERROR SYNC CPMK EXTERNAL IDS:", error);
-        res.status(500).json({ message: "Gagal sinkronisasi CPMK dengan SIAKAD." });
-    }
-};
-
-// ============================================================
 // GET /api/siakad/matakuliah
 // Proxy pencarian mata kuliah dari SIAKAD (untuk picker di form matkul lokal)
 // ============================================================

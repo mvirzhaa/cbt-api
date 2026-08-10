@@ -170,22 +170,33 @@ JS functions.
   /api/siakad/rencana-evaluasi?kode_mk=&periode_id=` first (proxies SIAK's
   `GET /koordinator-mk/mata-kuliah/:id/rencana-evaluasi`, resolving
   `:id` from `mata_kuliah.siakad_id`).
-- **CPMK/Sub-CPMK mapping**: `cpmk.external_id` / `sub_cpmk.external_id`
-  (already in schema, previously unused) hold the SIAK CPMK/Sub-CPMK UUIDs.
-  `POST /api/siakad/mata-kuliah/:kode_mk/sync-cpmk?periode_id=` auto-fills
-  these by matching local `kode_cpmk`/`kode_sub_cpmk` against SIAK's
-  `masterCpmk` (exact, case-insensitive); anything it can't match is reported
-  back for manual fill via `PUT /api/cpmk/:id` / `PUT /api/sub-cpmk/:id`
-  (`external_id` is now an accepted field on both). `questions.cpmk_id`/
-  `sub_cpmk_id` can be set both when importing from the question bank
-  (`questionBankController.js`) *and* directly on `POST/PUT
-  /api/questions` (`cpmk_id`/`sub_cpmk_id` body fields — previously only the
-  free-text `cpmk` label was settable there). `GET /api/questions` returns a
-  `siakad_ready` flag per question (has a mapped CPMK/Sub-CPMK with a
-  populated `external_id`) so a dosen can see push-readiness before
-  publishing. Questions without a resolvable `cpmk_id`/`sub_cpmk_id` →
-  `external_id` are simply skipped from the breakdown push (not an error) —
-  same as the reference tool's own behavior when a mapping is missing.
+- **CPMK/Sub-CPMK mapping**: local `cpmk`/`sub_cpmk` rows are pure shadow
+  mirrors of SIAK — there is no manual entry and no fuzzy reconciliation.
+  `GET /api/siakad/mata-kuliah/:kode_mk/pemetaan-cpmk` (proxy of SIAK's
+  `GET /obe/mata-kuliah/:id/pemetaan-cpmk`) returns the live CPMK/Sub-CPMK
+  tree straight from SIAK; `POST /api/siakad/mata-kuliah/:kode_mk/resolve-cpmk`
+  (`resolveCpmkFromSiakad` in `siakadController.js`) is the *only* way a local
+  `cpmk`/`sub_cpmk` row gets created — it upserts by `kode`, copying
+  `deskripsi`/`external_id` straight off the SIAK response the dosen picked,
+  never typed by hand. `CpmkManagement.jsx` (frontend) renders that SIAK tree
+  directly per mata kuliah and offers an "Impor" button per CPMK/Sub-CPMK
+  instead of a create form; a mata kuliah must have `siakad_id` set before
+  anything can be imported for it. `POST /api/cpmk`, `PUT /api/cpmk/:id`,
+  `POST /api/cpmk/:cpmk_id/sub-cpmk`, `PUT /api/cpmk/sub-cpmk/:id`, and
+  `POST /api/siakad/mata-kuliah/:kode_mk/sync-cpmk` (the old fuzzy
+  kode-matching endpoint) have all been removed — `GET /api/cpmk`,
+  `DELETE /api/cpmk/:id`, `DELETE /api/cpmk/sub-cpmk/:id` remain, for listing
+  and unlinking a wrongly-imported row (doesn't touch SIAK, can be
+  re-imported anytime). `questions.cpmk_id`/`sub_cpmk_id` can be set both when
+  importing from the question bank (`questionBankController.js`) *and*
+  directly on `POST/PUT /api/questions` (`cpmk_id`/`sub_cpmk_id` body fields
+  — previously only the free-text `cpmk` label was settable there). `GET
+  /api/questions` returns a `siakad_ready` flag per question (has a mapped
+  CPMK/Sub-CPMK with a populated `external_id`) so a dosen can see
+  push-readiness before publishing. Questions without a resolvable
+  `cpmk_id`/`sub_cpmk_id` → `external_id` are simply skipped from the
+  breakdown push (not an error) — same as the reference tool's own behavior
+  when a mapping is missing.
 - **Push** is only allowed for `exam_attempts.status === 'SELESAI'` (dosen
   must verify/publish in CBT first): `POST /api/siakad/attempts/:attempt_id/push`
   (single) or `POST /api/siakad/exams/:exam_id/push` (bulk, all `SELESAI`
