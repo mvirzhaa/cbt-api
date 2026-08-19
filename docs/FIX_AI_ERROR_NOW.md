@@ -140,11 +140,6 @@ pm2 logs cbt-skripsi-api | grep "AI Worker"
 **API Key mungkin salah region. Coba:**
 
 ```bash
-# Test API key dengan curl
-curl -H "Content-Type: application/json" \
-  -d '{"contents":[{"parts":[{"text":"Test"}]}]}' \
-  "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=AIzaSyCZ9eLbazlDxUS3pU9ub0rVIFMymv4bvKc"
-```
 
 Jika error 404 juga, berarti API key perlu diganti.
 

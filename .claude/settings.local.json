@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(sudo nginx -T)",
+      "Bash(node --check controllers/dosenController.js)",
+      "Bash(node -e ' *)",
+      "Bash(find /d/Belajar -maxdepth 2 -iname \"*frontend*\" 2>&1)",
+      "PowerShell(Get-Service | Where-Object {$_.Name -match 'mysql'} | Select-Object Name,Status; Write-Output '---'; Get-Process | Where-Object {$_.ProcessName -match 'mysqld'} | Select-Object ProcessName,Id; Write-Output '---'; Test-NetConnection -ComputerName 127.0.0.1 -Port 3306 -WarningAction SilentlyContinue | Select-Object TcpTestSucceeded)",
+      "Bash(node -c controllers/matakuliahController.js)",
+      "Bash(node -c routes/matakuliah.js)"
+    ]
+  }
+}
