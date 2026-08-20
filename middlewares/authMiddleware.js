@@ -1,3 +1,4 @@
+const { isUserBlacklisted } = require('../utils/tokenBlacklist');
 const jwt = require('jsonwebtoken');
 const JWT_SECRET = process.env.JWT_SECRET;
 
@@ -7,25 +8,27 @@ if (!JWT_SECRET) {
 
 // 1. Satpam Pengecek Karcis (Validasi Token JWT)
 exports.verifyToken = (req, res, next) => {
-    // Ambil token dari header Authorization
     const authHeader = req.headers['authorization'];
-    const token = authHeader && authHeader.split(' ')[1]; // Format: "Bearer <token>"
+    const token = authHeader && authHeader.split(' ')[1];
 
     if (!token) {
         return res.status(401).json({ message: "Akses ditolak! Token tidak ditemukan." });
     }
 
     try {
-        // Cek keaslian token
         const decoded = jwt.verify(token, JWT_SECRET);
-        // Standardize user ID field between regular login and TIAS SSO login
-        if (decoded.userId && !decoded.id) {
-            decoded.id = decoded.userId;
-        } else if (decoded.id && !decoded.userId) {
-            decoded.userId = decoded.id;
+        
+        if (decoded.userId && !decoded.id) decoded.id = decoded.userId;
+        else if (decoded.id && !decoded.userId) decoded.userId = decoded.id;
+
+        // ← cek blacklist
+        const userIdToCheck = decoded.eportal_user_id || decoded.id;
+        if (isUserBlacklisted(userIdToCheck)) {
+            return res.status(401).json({ message: "Session telah berakhir. Silakan login kembali." });
         }
-        req.user = decoded; // Simpan data user (id, role) ke dalam request
-        next(); // Lanjut ke proses berikutnya
+
+        req.user = decoded;
+        next();
     } catch (error) {
         return res.status(403).json({ message: "Token tidak valid atau sudah kedaluwarsa!" });
     }

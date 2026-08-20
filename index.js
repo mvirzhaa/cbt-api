@@ -20,6 +20,7 @@ const dosenRoutes = require('./routes/dosen');
 const siakadRoutes = require('./routes/siakad');
 const cpmkRoutes = require('./routes/cpmk');
 const questionBankRoutes = require('./routes/questionBank');
+const ssoRoutes = require('./routes/sso');
 
 // =========================================================================
 // ⚙️ SETUP MIDDLEWARE GLOBAL
@@ -46,6 +47,11 @@ app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 app.get('/', (req, res) => {
     res.json({ message: "CBT API Ready! 🚀 AI Auto-Grader & Tenant Isolation Activated." });
 });
+
+// =========================================================================
+// 🔌 LOGIN SSO ROUTES
+// =========================================================================
+app.use('/api/sso', ssoRoutes); 
 
 // =========================================================================
 // 🔌 REGISTER ROUTES
