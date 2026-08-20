@@ -167,6 +167,26 @@ exports.getPemetaanCpmk = async (mkSiakadId) => {
 };
 
 /**
+ * FIX 2026-08-20: GET Kelas Kuliah -- sumber data buat picker "Set Target
+ * SIAKAD" (RekapNilai.jsx), yang SEBELUMNYA cuma kotak teks kosong minta
+ * dosen ketik manual UUID siak_kelas_kuliah_id/siakad_periode_akademik_id
+ * (gak ada cara nemuinnya dari dalam CBT sama sekali). Endpoint SIAKAD-nya
+ * cuma bisa filter search by NAMA mata kuliah (bukan siakad_id/kode_mk),
+ * jadi caller kirim `namaMk`. Tiap hasil sudah bawa periodeAkademik-nya
+ * sendiri (1 kelas = 1 periode pasti), jadi 1 pilihan di picker ini otomatis
+ * ngisi KEDUA id (kelas + periode) sekaligus.
+ * @param {string} namaMk - mata_kuliah.nama_mk lokal CBT (dicocokkan iLike ke nama MK SIAKAD)
+ */
+exports.searchKelasKuliah = async (namaMk) => {
+    if (isStubMode()) {
+        return simulate(`GET kelas-kuliah search=${namaMk}`, { data: [] });
+    }
+    const result = await authedRequest('GET', `/kelas-kuliah?search=${encodeURIComponent(namaMk)}&size=50`);
+    if (!result.success) return result;
+    return { success: true, data: extractArray(result.data) };
+};
+
+/**
  * GET peserta kelas (utk resolve NIM -> krsId sebelum push nilai).
  * @param {string} kelasId - exams.siakad_kelas_kuliah_id
  * @returns {Promise<{success:boolean, data?: Array<{rincianKrsId, nim, nama}>, message?:string}>}

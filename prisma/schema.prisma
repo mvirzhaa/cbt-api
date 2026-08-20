@@ -32,6 +32,12 @@ model exams {
   siakad_kelas_kuliah_id     String? @db.VarChar(64)
   siakad_periode_akademik_id String? @db.VarChar(64)
   siakad_rencana_evaluasi_id String? @db.VarChar(64)
+  // Cache bobot resmi per CPMK/Sub-CPMK (external_id -> bobotCpmk) dari RPS
+  // SIAKAD untuk siakad_rencana_evaluasi_id di atas, diambil sekali saat target
+  // di-set (lihat setExamSiakadTarget) -- dipakai buildJobFromAttempt() supaya
+  // bobotPoin yang dikirim ke breakdown itu bobot RESMI RPS, bukan skorMaksimal
+  // soal lokal CBT (2 hal yang beda skalanya, sebelumnya ketuker).
+  siakad_bobot_cpmk Json?
 
   @@index([kode_mk], map: "kode_mk")
 }

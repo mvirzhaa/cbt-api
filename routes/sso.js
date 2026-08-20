@@ -2,8 +2,12 @@ const express = require('express');
 const router = express.Router();
 const axios = require('axios');
 const jwt = require('jsonwebtoken');
+const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
+const { PrismaClient } = require('@prisma/client');
 const { addUserToBlacklist, removeUserFromBlacklist } = require('../utils/tokenBlacklist');
 
+const prisma = new PrismaClient();
 const EPORTAL_API = process.env.EPORTAL_URL || 'http://localhost:8000';
 
 // GET /api/sso/callback
@@ -37,12 +41,55 @@ router.get('/callback', async (req, res) => {
         // Hapus dari blacklist kalau login ulang
         removeUserFromBlacklist(eportalUserId);
 
-        // Generate token CBT
+        // FIX 2026-08-21: sebelumnya endpoint ini gak pernah nyentuh tabel `users`
+        // lokal CBT -- JWT langsung dibikin pakai id/role mentah dari E-Portal, jadi
+        // gak pernah nyambung ke akun CBT manapun (riwayat ujian kosong, submit/verify
+        // gagal FK constraint karena user_id itu gak ada row-nya di CBT). Sekarang
+        // cari-atau-buat user lokal berdasarkan email, pola sama persis kayak
+        // exports.externalLogin di authController.js (integrasi TIAS) yang sudah
+        // dipakai & terbukti jalan -- biar kedua jalur SSO konsisten.
+        const institutionalRole = (eportalRes.access?.role_name || eportalUser.institutional_role || eportalUser.role || '').toUpperCase();
+        // Whitelist ketat sama kayak externalLogin: cuma dosen/mahasiswa yang boleh
+        // auto-provisioning lewat SSO. admin/super_admin CBT tetap harus dibuat manual.
+        const safeRole = institutionalRole.includes('DOSEN') ? 'dosen' : 'mahasiswa';
+
+        let user = await prisma.users.findUnique({ where: { email: eportalUser.email } });
+
+        if (!user) {
+            user = await prisma.users.create({
+                data: {
+                    email: eportalUser.email,
+                    nama: eportalUser.name || eportalUser.email,
+                    nim: eportalUser.npm || null,
+                    // Password acak karena login hanya lewat SSO, gak pernah dipakai
+                    password: await bcrypt.hash(crypto.randomBytes(32).toString('hex'), 10),
+                    role: safeRole,
+                    status_aktif: true // Langsung aktif, identitasnya sudah divalidasi E-Portal
+                }
+            });
+        } else {
+            // Sinkronkan role tiap login SSO (E-Portal sumber kebenaran terbaru) + isi nim
+            // kalau belum ada. Role admin/super_admin CBT sengaja TIDAK disentuh di sini.
+            const dataToUpdate = {};
+            if ((user.role === 'dosen' || user.role === 'mahasiswa') && user.role !== safeRole) {
+                dataToUpdate.role = safeRole;
+            }
+            if (!user.nim && eportalUser.npm) {
+                dataToUpdate.nim = eportalUser.npm;
+            }
+            if (Object.keys(dataToUpdate).length > 0) {
+                user = await prisma.users.update({ where: { id: user.id }, data: dataToUpdate });
+            }
+        }
+
+        // Generate token CBT -- pakai id LOKAL (bukan id mentah E-Portal) supaya semua
+        // query `user_id` di seluruh aplikasi CBT nyambung ke akun yang benar.
         const cbtToken = jwt.sign(
             {
-                id: eportalUserId,
-                email: eportalUser.email,
-                role: eportalRes.access?.role_name || eportalUser.institutional_role,
+                id: user.id,
+                userId: user.id,
+                email: user.email,
+                role: user.role,
                 role_id: parseInt(role_id),
                 eportal_user_id: eportalUserId,
                 permissions: eportalRes.access?.permissions || [],
@@ -57,10 +104,10 @@ router.get('/callback', async (req, res) => {
             data: {
                 token: cbtToken,
                 user: {
-                    id: eportalUserId,
-                    email: eportalUser.email,
-                    role: eportalRes.access?.role_name || eportalUser.institutional_role,
-                    nama: eportalUser.name,
+                    id: user.id,
+                    email: user.email,
+                    role: user.role,
+                    nama: user.nama,
                     permissions: eportalRes.access?.permissions || [],
                 }
             }

@@ -17,17 +17,44 @@ const buildJobFromAttempt = async (attempt) => {
         include: { questions: { include: { cpmk_ref: true, sub_cpmk_ref: true } } }
     });
 
-    const breakdown = responses
-        .map(r => {
-            const externalId = r.questions.sub_cpmk_ref?.external_id || r.questions.cpmk_ref?.external_id || null;
-            const skorMaksimal = parseFloat(r.questions.bobot_nilai || 0);
-            return {
-                skorDiperoleh: parseFloat(r.skor || 0),
-                skorMaksimal,
-                pemetaanCpmk: externalId ? [{ cpmkId: externalId, bobotPoin: skorMaksimal }] : []
-            };
-        })
-        .filter(unit => unit.pemetaanCpmk.length > 0);
+    // FIX 2026-08-20: bobotPoin per unit breakdown itu DULU disamain sama
+    // skorMaksimal soal (poin lokal CBT) -- padahal seharusnya bobot RESMI
+    // Sub-CPMK/CPMK dari RPS SIAKAD (siakad_bobot_cpmk, di-cache saat target
+    // di-set, lihat setExamSiakadTarget). Dua hal itu skalanya beda sama
+    // sekali (mis. soal 10 poin vs Sub-CPMK cuma jatah 6.25 dari RPS) --
+    // ketuker bikin total bobotPoin per komponen gampang lebih besar dari
+    // bobot komponen (ditolak SIAKAD), atau distribusinya ngasal vs RPS.
+    // Soal yang CPMK/Sub-CPMK-nya gak punya bobot resmi di komponen ini
+    // (bobotMap[externalId] undefined -- termasuk kasus dosen salah pilih
+    // Sub-CPMK yang jatahnya komponen lain, mis. UAS tapi exam-nya UTS)
+    // SENGAJA di-skip dari breakdown, bukan dipaksa kirim bobot ngasal.
+    const bobotMap = attempt.exams.siakad_bobot_cpmk || {};
+
+    const withExternalId = responses
+        .map(r => ({
+            r,
+            externalId: r.questions.sub_cpmk_ref?.external_id || r.questions.cpmk_ref?.external_id || null
+        }))
+        .filter(x => x.externalId && bobotMap[x.externalId] !== undefined);
+
+    // Bobot resmi per Sub-CPMK itu TOTAL utk komponen ini (bukan per soal) --
+    // kalau lebih dari 1 soal nunjuk ke Sub-CPMK yang sama, bagi rata supaya
+    // jumlahnya pas balik ke angka resmi RPS pas diagregat ulang di SIAKAD.
+    const countPerExternalId = {};
+    withExternalId.forEach(({ externalId }) => {
+        countPerExternalId[externalId] = (countPerExternalId[externalId] || 0) + 1;
+    });
+
+    const breakdown = withExternalId.map(({ r, externalId }) => {
+        const skorMaksimal = parseFloat(r.questions.bobot_nilai || 0);
+        const bobotResmiTotal = parseFloat(bobotMap[externalId] || 0);
+        const bobotPoin = bobotResmiTotal / countPerExternalId[externalId];
+        return {
+            skorDiperoleh: parseFloat(r.skor || 0),
+            skorMaksimal,
+            pemetaanCpmk: [{ cpmkId: externalId, bobotPoin }]
+        };
+    });
 
     return {
         attempt_id: attempt.id,
@@ -55,10 +82,36 @@ exports.setExamSiakadTarget = async (req, res) => {
             return res.status(400).json({ message: "siakad_kelas_kuliah_id dan siakad_periode_akademik_id wajib diisi." });
         }
 
-        const exam = await prisma.exams.findUnique({ where: { id: examId } });
+        const exam = await prisma.exams.findUnique({ where: { id: examId }, include: { mata_kuliah: true } });
         if (!exam) return res.status(404).json({ message: "Ujian tidak ditemukan." });
         if (exam.kode_dosen !== req.user.id.toString() && req.user.role !== 'super_admin') {
             return res.status(403).json({ message: "Akses Ditolak! Ujian ini bukan milik Anda." });
+        }
+
+        const finalRencanaEvaluasiId = siakad_rencana_evaluasi_id !== undefined
+            ? (isNonEmptyString(siakad_rencana_evaluasi_id) ? siakad_rencana_evaluasi_id : null)
+            : exam.siakad_rencana_evaluasi_id;
+
+        // FIX 2026-08-20: cache bobot RESMI per CPMK/Sub-CPMK (external_id ->
+        // bobotCpmk) dari RPS SIAKAD komponen ini -- dipakai buildJobFromAttempt()
+        // supaya bobotPoin yang dikirim ke breakdown itu bobot resmi RPS, BUKAN
+        // skorMaksimal soal lokal CBT (2 hal beda skala yang sebelumnya ketuker,
+        // bikin total bobotPoin per push gampang lebih besar dari bobot komponen
+        // -- SIAKAD nolak, atau kalaupun lolos distribusinya jadi ngasal vs RPS).
+        // Diambil ulang tiap kali target/komponen di-set/diganti (bukan sekali di
+        // awal) supaya tetap akurat kalau RPS-nya direvisi di SIAKAD.
+        let siakadBobotCpmk = exam.siakad_bobot_cpmk;
+        if (finalRencanaEvaluasiId && exam.mata_kuliah?.siakad_id) {
+            const rencanaResult = await siakadClient.getRencanaEvaluasi(exam.mata_kuliah.siakad_id, siakad_periode_akademik_id);
+            if (rencanaResult.success) {
+                const list = rencanaResult.data?.rencanaEvaluasi || [];
+                const match = list.find(r => r.id === finalRencanaEvaluasiId);
+                siakadBobotCpmk = match?.mappingBobotCpmk || null;
+            } else {
+                console.warn(`[SIAKAD Target] Gagal ambil bobot CPMK resmi utk exam_id=${examId}: ${rencanaResult.message}`);
+            }
+        } else if (!finalRencanaEvaluasiId) {
+            siakadBobotCpmk = null;
         }
 
         const updated = await prisma.exams.update({
@@ -66,9 +119,8 @@ exports.setExamSiakadTarget = async (req, res) => {
             data: {
                 siakad_kelas_kuliah_id,
                 siakad_periode_akademik_id,
-                siakad_rencana_evaluasi_id: siakad_rencana_evaluasi_id !== undefined
-                    ? (isNonEmptyString(siakad_rencana_evaluasi_id) ? siakad_rencana_evaluasi_id : null)
-                    : exam.siakad_rencana_evaluasi_id
+                siakad_rencana_evaluasi_id: finalRencanaEvaluasiId,
+                siakad_bobot_cpmk: siakadBobotCpmk
             }
         });
 
@@ -77,7 +129,8 @@ exports.setExamSiakadTarget = async (req, res) => {
             data: {
                 siakad_kelas_kuliah_id: updated.siakad_kelas_kuliah_id,
                 siakad_periode_akademik_id: updated.siakad_periode_akademik_id,
-                siakad_rencana_evaluasi_id: updated.siakad_rencana_evaluasi_id
+                siakad_rencana_evaluasi_id: updated.siakad_rencana_evaluasi_id,
+                siakad_bobot_cpmk: updated.siakad_bobot_cpmk
             }
         });
     } catch (error) {
@@ -206,6 +259,34 @@ exports.getRencanaEvaluasi = async (req, res) => {
     } catch (error) {
         console.error("❌ ERROR GET SIAKAD RENCANA EVALUASI:", error);
         res.status(500).json({ message: "Gagal mengambil Rencana Evaluasi dari SIAKAD." });
+    }
+};
+
+// ============================================================
+// GET /api/siakad/kelas-kuliah?kode_mk=
+// FIX 2026-08-20: proxy pencarian Kelas Kuliah dari SIAKAD, sumber picker
+// "Set Target SIAKAD" (RekapNilai.jsx) -- sebelumnya dosen ketik manual
+// siakad_kelas_kuliah_id/siakad_periode_akademik_id dari kotak teks kosong,
+// gak ada cara nemuin ID-nya dari dalam CBT. SIAKAD cuma bisa search by NAMA
+// MK (bukan siakad_id/kode_mk), jadi ambil nama_mk lokal dulu dari kode_mk.
+// ============================================================
+exports.searchKelasKuliah = async (req, res) => {
+    try {
+        const kodeMk = req.query.kode_mk;
+        if (!isNonEmptyString(kodeMk)) return res.status(400).json({ message: "kode_mk wajib diisi." });
+
+        const mk = await prisma.mata_kuliah.findUnique({ where: { kode_mk: kodeMk } });
+        if (!mk) return res.status(404).json({ message: "Mata kuliah tidak ditemukan." });
+
+        const result = await siakadClient.searchKelasKuliah(mk.nama_mk);
+        if (!result.success) {
+            return res.status(502).json({ message: `Gagal mengambil daftar Kelas Kuliah dari SIAKAD: ${result.message}` });
+        }
+
+        res.status(200).json({ data: result.data });
+    } catch (error) {
+        console.error("❌ ERROR GET SIAKAD KELAS KULIAH:", error);
+        res.status(500).json({ message: "Gagal mengambil daftar Kelas Kuliah dari SIAKAD." });
     }
 };
 

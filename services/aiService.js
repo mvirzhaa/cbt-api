@@ -10,11 +10,15 @@ const prisma = new PrismaClient();
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 // Model priority (verified working models)
+// UPDATE 2026-08-20: 4 model lama semuanya sudah dipensiunkan Google (404 "no
+// longer available", lihat pesan errornya sendiri nyaranin model pengganti di
+// bawah) -- diganti ke alias/model generasi terbaru yang sudah dicek beneran
+// hidup (200) lewat curl langsung ke Generative Language API.
 const MODEL_PRIORITY = [
-    "gemini-2.5-flash",           // Stable Jun 2025 (RECOMMENDED - 1M tokens)
-    "gemini-2.0-flash",           // Fast & versatile
-    "gemini-2.0-flash-lite",      // Lighter & faster version
-    "gemini-2.5-pro"              // Most powerful (fallback)
+    "gemini-flash-latest",        // Alias resmi, ikut versi flash terbaru yang didukung
+    "gemini-3.6-flash",           // Pengganti gemini-2.5-flash/2.0-flash (dipensiunkan)
+    "gemini-3.5-flash-lite",      // Pengganti gemini-2.0-flash-lite (dipensiunkan)
+    "gemini-pro-latest"           // Alias resmi tier pro (fallback) -- gemini-2.5-pro dipensiunkan
 ];
 
 // DEBUG: Log saat module di-load
@@ -133,15 +137,24 @@ const processQueue = async () => {
             const skorAI = await gradeWithAI(job.soal, job.kunciJawaban, job.jawabanMhs);
 
             if (skorAI !== null) {
+                // FIX 2026-08-21: skorAI itu persentase akurasi 0-100 dari Gemini,
+                // BUKAN poin -- kalau ditulis mentah ke `skor` (yang seharusnya
+                // dibatasi 0..bobot_nilai soal, sama kayak PG), gampang jauh
+                // ngelewatin bobot_nilai soal ini (mis. bobot 6.25 tapi skor
+                // ketulis 85). Konversi dulu jadi poin di skala bobot_nilai soal
+                // ini, biar konsisten sama PG dan valid dikirim ke SIAKAD nanti
+                // (SIAKAD nolak keras kalau skorDiperoleh > skorMaksimal).
+                const skorPoin = Math.round((skorAI / 100) * job.bobotNilai * 100) / 100;
+
                 // SUCCESS: Update only the individual response score
                 await prisma.student_responses.update({
                     where: { id: job.responseId },
                     data: {
-                        skor: skorAI
+                        skor: skorPoin
                         // status_penilaian stays 'menunggu' for dosen verification
                     }
                 });
-                console.log(`[AI Worker] ✅ Done! ID: ${job.responseId} | Score: ${skorAI}`);
+                console.log(`[AI Worker] ✅ Done! ID: ${job.responseId} | AI accuracy: ${skorAI}/100 -> Score: ${skorPoin}/${job.bobotNilai}`);
 
                 // FIX 1A: REMOVED RECALCULATION
                 // No exam_attempts update here - saves 80% DB queries
@@ -189,7 +202,7 @@ const processQueue = async () => {
  * FIX 1B: Add job to queue with SOFT LIMIT
  * @returns {boolean} true if added, false if rejected
  */
-exports.addToQueue = (responseId, soal, kunciJawaban, jawabanMhs, userId, examId) => {
+exports.addToQueue = (responseId, soal, kunciJawaban, jawabanMhs, userId, examId, bobotNilai) => {
     // FIX 1B: Soft limit check
     if (correctionQueue.length >= MAX_QUEUE_SIZE) {
         rejectedJobsCount++;
@@ -217,6 +230,11 @@ exports.addToQueue = (responseId, soal, kunciJawaban, jawabanMhs, userId, examId
         jawabanMhs,
         userId,
         examId,
+        // FIX 2026-08-21: skala poin soal ini -- dipakai konversi skorAI (0-100)
+        // jadi poin sebelum disimpan, lihat processQueue(). Default 10 kalau
+        // gak dikirim (mis. panggilan lama/lupa), samain sama default bobot
+        // soal di studentController.js.
+        bobotNilai: bobotNilai ? parseFloat(bobotNilai) : 10,
         createdAt: Date.now(), // FIX 1C: TTL timestamp
         retryCount: 0
     });

@@ -24,6 +24,10 @@ router.post('/exams/:exam_id/push', verifyToken, isDosenOrSuperAdmin, siakadCont
 // Rencana Evaluasi (setup sebelum push nilai)
 router.get('/rencana-evaluasi', verifyToken, isDosenOrSuperAdmin, siakadController.getRencanaEvaluasi);
 
+// FIX 2026-08-20: picker Kelas Kuliah utk "Set Target SIAKAD" (RekapNilai.jsx)
+// -- sebelumnya kotak teks kosong, dosen ketik manual UUID tanpa cara nyari.
+router.get('/kelas-kuliah', verifyToken, isDosenOrSuperAdmin, siakadController.searchKelasKuliah);
+
 // Pemetaan CPMK live (picker Sub-CPMK saat bikin soal) & auto-provision
 router.get('/mata-kuliah/:kode_mk/pemetaan-cpmk', verifyToken, isDosenOrSuperAdmin, siakadController.getPemetaanCpmk);
 router.post('/mata-kuliah/:kode_mk/resolve-cpmk', verifyToken, isDosenOrSuperAdmin, siakadController.resolveCpmkFromSiakad);

@@ -10,11 +10,14 @@ const { GoogleGenerativeAI } = require("@google/generative-ai");
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
+// UPDATE 2026-08-20: 4 model lama dipensiunkan Google (404 "no longer
+// available") -- diganti ke alias/model generasi terbaru yang sudah dicek
+// hidup langsung lewat curl, sama seperti aiService.js.
 const MODEL_PRIORITY = [
-    "gemini-2.5-flash",
-    "gemini-2.0-flash",
-    "gemini-2.0-flash-lite",
-    "gemini-2.5-pro"
+    "gemini-flash-latest",
+    "gemini-3.6-flash",
+    "gemini-3.5-flash-lite",
+    "gemini-pro-latest"
 ];
 
 let currentModelIndex = 0;

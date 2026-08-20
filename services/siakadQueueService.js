@@ -64,12 +64,20 @@ async function pushJobToSiakad(job) {
     ]);
     if (!breakdownResult.success) return breakdownResult;
 
-    const nilaiAkhirResult = await siakadClient.pushNilaiAkhir([
-        { krsId, nilaiAkhir: job.final_score }
-    ]);
-    if (!nilaiAkhirResult.success) return nilaiAkhirResult;
-
-    return { success: true, simulated: breakdownResult.simulated && nilaiAkhirResult.simulated };
+    // FIX 2026-08-20: pushNilaiAkhir() DIHAPUS dari alur ini -- SIAKAD sendiri
+    // sudah hitung & tulis nilai akhir MK otomatis begitu breakdown di atas
+    // masuk (lihat refreshNilaiAkhirJalurD di cbt.service.js SIAKAD, dipanggil
+    // dari simpanNilaiKomponenDariCbt). Sebelumnya panggilan ini tetap jalan
+    // sesudah breakdown, dan karena jalan BELAKANGAN, job.final_score (hasil
+    // hitungan CBT sendiri, rumus PER_KATEGORI/bobot pilgan-esai-upload) diam2
+    // NIMPA nilai akhir yang baru saja dihitung SIAKAD dari ledger komponen
+    // (RPS) -- padahal sudah dikonfirmasi ke tim CBT (lihat komentar di
+    // services/cbt.service.js SIAKAD sekitar baris 260) bahwa endpoint
+    // /cbt/nilai-akhir ini TIDAK dipakai. Kalau 2 rumus itu (bobot kategori
+    // CBT vs bobot komponen RPS SIAKAD) beda, nilai akhir mahasiswa bisa jadi
+    // salah tanpa ketauan -- warning selisih yang sebenarnya dihitung SIAKAD
+    // juga dulu dibuang gitu aja, gak pernah dilog.
+    return { success: true, simulated: breakdownResult.simulated };
 }
 
 const processQueue = async () => {

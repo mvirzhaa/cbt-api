@@ -183,7 +183,12 @@ exports.submitExam = async (req, res) => {
                         question_id: soal.id,
                         soalTeks: soal.isi_soal || "Soal Esai IT",
                         kunciJawaban: soal.kunci_jawaban || "",
-                        jawabanMhs: jawabanMhs
+                        jawabanMhs: jawabanMhs,
+                        // FIX 2026-08-21: AI dinilai 0-100 (persentase akurasi), tapi
+                        // skor tersimpan harus sudah dalam skala bobot_nilai soal ini
+                        // (poin, sama kayak PG) -- dikonversi di aiService.js pakai
+                        // bobotNilai ini, bukan disimpan mentah 0-100.
+                        bobotNilai: bobot
                     });
                 }
             } else if (soal.tipe_soal === 'TIPE_4') { 
@@ -266,7 +271,8 @@ exports.submitExam = async (req, res) => {
                         esai.kunciJawaban,
                         esai.jawabanMhs,
                         user_id,
-                        examIdInt
+                        examIdInt,
+                        esai.bobotNilai
                     );
 
                     if (added) {
