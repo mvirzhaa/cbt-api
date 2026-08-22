@@ -29,15 +29,19 @@ const TIPE_SCHEMA_HINT = {
     TIPE_4: `[{ "isi_soal": "instruksi tugas upload yang jelas" }]`
 };
 
-const buildPrompt = ({ namaMk, cpmkDeskripsi, subCpmkDeskripsi, tipeSoal, jumlah, tingkatKesulitan }) => {
+const buildPrompt = ({ namaMk, cpmkDeskripsi, subCpmkDeskripsi, tipeSoal, jumlah, tingkatKesulitan, jenisEvaluasi }) => {
     const skema = TIPE_SCHEMA_HINT[tipeSoal];
     const konteksCpmk = subCpmkDeskripsi
         ? `Sub-CPMK acuan: "${subCpmkDeskripsi}"${cpmkDeskripsi ? ` (bagian dari CPMK: "${cpmkDeskripsi}")` : ''}`
         : (cpmkDeskripsi ? `CPMK acuan: "${cpmkDeskripsi}"` : 'Tidak ada CPMK spesifik, buat soal umum sesuai mata kuliah.');
+    const konteksEvaluasi = jenisEvaluasi
+        ? `Soal ini akan dipakai untuk komponen evaluasi "${jenisEvaluasi}" -- sesuaikan cakupan materi, gaya, dan tingkat kedalaman soal dengan konteks itu (mis. Kuis/Tugas lebih fokus & ringkas per topik, UTS/UAS lebih komprehensif, Proyek Akhir lebih aplikatif/studi kasus).`
+        : '';
 
     return `
     Kamu adalah Dosen ${namaMk || 'Teknik Informatika'} yang menyusun soal ujian.
     ${konteksCpmk}
+    ${konteksEvaluasi}
     Tingkat kesulitan: ${tingkatKesulitan || 'sedang'}.
 
     TUGAS: Buat tepat ${jumlah} butir soal tipe ${tipeSoal} yang mengukur pemahaman mahasiswa terhadap acuan CPMK/Sub-CPMK di atas.
@@ -59,8 +63,8 @@ const stripCodeFence = (text) => {
  * Generate draft questions via Gemini.
  * @returns {Array|null} parsed array of generated questions, or null if all models/parsing fail
  */
-exports.generateQuestions = async ({ namaMk, cpmkDeskripsi, subCpmkDeskripsi, tipeSoal, jumlah, tingkatKesulitan }) => {
-    const prompt = buildPrompt({ namaMk, cpmkDeskripsi, subCpmkDeskripsi, tipeSoal, jumlah, tingkatKesulitan });
+exports.generateQuestions = async ({ namaMk, cpmkDeskripsi, subCpmkDeskripsi, tipeSoal, jumlah, tingkatKesulitan, jenisEvaluasi }) => {
+    const prompt = buildPrompt({ namaMk, cpmkDeskripsi, subCpmkDeskripsi, tipeSoal, jumlah, tingkatKesulitan, jenisEvaluasi });
     const maxRetries = MODEL_PRIORITY.length;
 
     for (let attempt = 0; attempt < maxRetries; attempt++) {

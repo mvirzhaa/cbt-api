@@ -209,7 +209,7 @@ exports.importFromBank = async (req, res) => {
 // ==========================================
 exports.generateAI = async (req, res) => {
     try {
-        const { kode_mk, cpmk_id, sub_cpmk_id, tipe_soal, tingkat_kesulitan } = req.body;
+        const { kode_mk, cpmk_id, sub_cpmk_id, tipe_soal, tingkat_kesulitan, jenis_evaluasi } = req.body;
         const jumlah = toPositiveInt(req.body.jumlah);
 
         if (!isNonEmptyString(kode_mk)) return res.status(400).json({ message: "kode_mk wajib diisi." });
@@ -221,64 +221,98 @@ exports.generateAI = async (req, res) => {
 
         const subCpmkId = toPositiveInt(sub_cpmk_id);
         const cpmkId = toPositiveInt(cpmk_id);
+        const jenisEvaluasi = isNonEmptyString(jenis_evaluasi) ? jenis_evaluasi : undefined;
 
-        let subCpmk = null, cpmk = null;
+        // batch = daftar { subCpmk, cpmk, jumlah } yang masing2 jadi 1 panggilan
+        // AI terpisah. Kalau dosen pilih Sub-CPMK/CPMK spesifik: 1 batch aja
+        // (perilaku lama, gak berubah). Kalau dikosongin: auto-bagi rata SEMUA
+        // soal yang diminta ke SELURUH Sub-CPMK matkul ini, round-robin
+        // berurutan (soal ke-i -> Sub-CPMK ke-(i % jumlahSub)) -- supaya tiap
+        // soal AI selalu punya mapping CPMK yang jelas (penting buat OBE di
+        // NL-SIAK), bukan nge-generate soal "nyasar" tanpa CPMK sama sekali.
+        let batch;
         if (subCpmkId) {
-            subCpmk = await prisma.sub_cpmk.findUnique({ where: { id: subCpmkId }, include: { cpmk: true } });
+            const subCpmk = await prisma.sub_cpmk.findUnique({ where: { id: subCpmkId }, include: { cpmk: true } });
             if (!subCpmk) return res.status(404).json({ message: "Sub-CPMK tidak ditemukan." });
-            cpmk = subCpmk.cpmk;
+            batch = [{ subCpmk, cpmk: subCpmk.cpmk, jumlah }];
         } else if (cpmkId) {
-            cpmk = await prisma.cpmk.findUnique({ where: { id: cpmkId } });
+            const cpmk = await prisma.cpmk.findUnique({ where: { id: cpmkId } });
             if (!cpmk) return res.status(404).json({ message: "CPMK tidak ditemukan." });
+            batch = [{ subCpmk: null, cpmk, jumlah }];
+        } else {
+            const semuaCpmk = await prisma.cpmk.findMany({
+                where: { kode_mk },
+                include: { sub_cpmk: { orderBy: { id: 'asc' } } },
+                orderBy: { id: 'asc' }
+            });
+            const semuaSubCpmk = semuaCpmk.flatMap(c => c.sub_cpmk.map(sc => ({ subCpmk: sc, cpmk: c })));
+
+            if (semuaSubCpmk.length === 0) {
+                batch = [{ subCpmk: null, cpmk: null, jumlah }];
+            } else {
+                const jumlahPerSub = new Map();
+                for (let i = 0; i < jumlah; i++) {
+                    const target = semuaSubCpmk[i % semuaSubCpmk.length];
+                    jumlahPerSub.set(target, (jumlahPerSub.get(target) || 0) + 1);
+                }
+                batch = semuaSubCpmk
+                    .filter(s => jumlahPerSub.has(s))
+                    .map(s => ({ subCpmk: s.subCpmk, cpmk: s.cpmk, jumlah: jumlahPerSub.get(s) }));
+            }
         }
 
-        const generated = await aiQuestionGenService.generateQuestions({
-            namaMk: mk.nama_mk,
-            cpmkDeskripsi: cpmk?.deskripsi,
-            subCpmkDeskripsi: subCpmk?.deskripsi,
-            tipeSoal: tipe_soal,
-            jumlah,
-            tingkatKesulitan: tingkat_kesulitan
-        });
+        const hasilBatch = await Promise.all(batch.map(async ({ subCpmk, cpmk, jumlah: jumlahUnit }) => {
+            const generated = await aiQuestionGenService.generateQuestions({
+                namaMk: mk.nama_mk,
+                cpmkDeskripsi: cpmk?.deskripsi,
+                subCpmkDeskripsi: subCpmk?.deskripsi,
+                tipeSoal: tipe_soal,
+                jumlah: jumlahUnit,
+                tingkatKesulitan: tingkat_kesulitan,
+                jenisEvaluasi
+            });
+            return { subCpmk, cpmk, generated: generated || [] };
+        }));
 
-        if (!generated) {
-            return res.status(502).json({ message: "AI gagal menghasilkan soal. Coba lagi beberapa saat, atau periksa konfigurasi GEMINI_API_KEY." });
-        }
+        const gagal = hasilBatch.filter(h => h.generated.length === 0).map(h => h.subCpmk?.kode_sub_cpmk || h.cpmk?.kode_cpmk || 'umum');
 
         const saved = [];
-        for (const item of generated) {
-            if (!isNonEmptyString(item.isi_soal)) continue;
+        for (const { subCpmk, cpmk, generated } of hasilBatch) {
+            for (const item of generated) {
+                if (!isNonEmptyString(item.isi_soal)) continue;
 
-            let optionsCreate;
-            if ((tipe_soal === 'TIPE_1' || tipe_soal === 'TIPE_2') && item.opsi) {
-                optionsCreate = OPTION_LABELS
-                    .filter(label => isNonEmptyString(item.opsi[label]))
-                    .map(label => ({ label_pilihan: label, teks_pilihan: item.opsi[label] }));
+                let optionsCreate;
+                if ((tipe_soal === 'TIPE_1' || tipe_soal === 'TIPE_2') && item.opsi) {
+                    optionsCreate = OPTION_LABELS
+                        .filter(label => isNonEmptyString(item.opsi[label]))
+                        .map(label => ({ label_pilihan: label, teks_pilihan: item.opsi[label] }));
+                }
+
+                const newBankSoal = await prisma.question_bank.create({
+                    data: {
+                        kode_mk,
+                        dibuat_oleh: req.user.id.toString(),
+                        tipe_soal,
+                        isi_soal: item.isi_soal,
+                        kunci_jawaban: item.kunci_jawaban || null,
+                        bobot_nilai: 10.00,
+                        sumber: 'AI_GENERATED',
+                        cpmk_id: cpmk?.id || null,
+                        sub_cpmk_id: subCpmk?.id || null,
+                        options: optionsCreate && optionsCreate.length > 0 ? { create: optionsCreate } : undefined
+                    },
+                    include: { options: true }
+                });
+                saved.push(newBankSoal);
             }
-
-            const newBankSoal = await prisma.question_bank.create({
-                data: {
-                    kode_mk,
-                    dibuat_oleh: req.user.id.toString(),
-                    tipe_soal,
-                    isi_soal: item.isi_soal,
-                    kunci_jawaban: item.kunci_jawaban || null,
-                    bobot_nilai: 10.00,
-                    sumber: 'AI_GENERATED',
-                    cpmk_id: cpmk?.id || null,
-                    sub_cpmk_id: subCpmk?.id || null,
-                    options: optionsCreate && optionsCreate.length > 0 ? { create: optionsCreate } : undefined
-                },
-                include: { options: true }
-            });
-            saved.push(newBankSoal);
         }
 
         if (saved.length === 0) {
-            return res.status(502).json({ message: "AI mengembalikan format yang tidak sesuai. Coba lagi." });
+            return res.status(502).json({ message: "AI gagal menghasilkan soal. Coba lagi beberapa saat, atau periksa konfigurasi GEMINI_API_KEY." });
         }
 
-        res.status(201).json({ message: `${saved.length} soal berhasil digenerate AI. Silakan review sebelum digunakan.`, data: saved });
+        const pesanGagal = gagal.length > 0 ? ` (${gagal.length} Sub-CPMK gagal digenerate, coba lagi: ${gagal.join(', ')})` : '';
+        res.status(201).json({ message: `${saved.length} soal berhasil digenerate AI.${pesanGagal} Silakan review sebelum digunakan.`, data: saved });
     } catch (error) {
         console.error('[generateAI] Error:', error.message);
         res.status(500).json({ message: "Gagal generate soal via AI." });
