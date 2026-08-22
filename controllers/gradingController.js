@@ -88,7 +88,7 @@ exports.getAnswersToGrade = async (req, res) => {
             where: { exam_id: examId, status_penilaian: 'menunggu' },
             include: {
                 users: { select: { nama: true } },
-                questions: { select: { isi_soal: true, tipe_soal: true } }
+                questions: { select: { isi_soal: true, tipe_soal: true, kunci_jawaban: true, bobot_nilai: true } }
             }
         });
         res.status(200).json({ data: answers });
@@ -236,13 +236,13 @@ exports.submitScore = async (req, res) => {
         const responseId = toPositiveInt(req.params.response_id);
         const scoreValue = Number.parseFloat(req.body.skor);
 
-        if (!responseId || !Number.isFinite(scoreValue) || scoreValue < 0 || scoreValue > 100) {
-            return res.status(400).json({ message: "Skor harus berupa angka antara 0 dan 100." });
+        if (!responseId || !Number.isFinite(scoreValue) || scoreValue < 0) {
+            return res.status(400).json({ message: "Skor harus berupa angka >= 0." });
         }
-        
+
         const response = await prisma.student_responses.findUnique({
             where: { id: responseId },
-            include: { exams: true }
+            include: { exams: true, questions: { select: { bobot_nilai: true } } }
         });
 
         if (!response) return res.status(404).json({ message: "Jawaban tidak ditemukan." });
@@ -250,9 +250,21 @@ exports.submitScore = async (req, res) => {
             return res.status(403).json({ message: "Anda tidak berhak menilai jawaban ini." });
         }
 
+        // FIX 2026-08-22: scoreValue dari dosen itu SUDAH skala poin (0..bobot
+        // soal ini), sama kayak FE (Grading.jsx) yang nampilin "Bobot: X" di
+        // kartu soal -- sebelumnya BE malah validasi & terima 0-100 flat, gak
+        // peduli bobot_nilai soal (bobot 20 tapi skor bisa ketulis 76), bikin
+        // SIAKAD nolak push (skorDiperoleh > skorMaksimal). Sekarang divalidasi
+        // ketat terhadap bobot_nilai soal ini, ditulis apa adanya (gak dikonversi).
+        const bobotNilai = parseFloat(response.questions?.bobot_nilai || 10);
+        if (scoreValue > bobotNilai) {
+            return res.status(400).json({ message: `Skor tidak boleh melebihi bobot soal ini (${bobotNilai}).` });
+        }
+        const skorPoin = scoreValue;
+
         const updatedResponse = await prisma.student_responses.update({
             where: { id: responseId },
-            data: { skor: scoreValue, status_penilaian: 'selesai' },
+            data: { skor: skorPoin, status_penilaian: 'selesai' },
             include: { questions: { select: { tipe_soal: true } } }
         });
 
@@ -269,25 +281,30 @@ exports.submitScore = async (req, res) => {
             allResponses.forEach(r => {
                 const bobot = parseFloat(r.questions.bobot_nilai || 10);
 
+                // FIX 2026-08-22: r.skor sekarang SELALU dalam skala POIN (0..bobot
+                // soal itu sendiri), bukan 0-100 lagi -- baik dari AI grading
+                // (aiService.js) maupun dari submitScore manual (fix di atas).
+                // Weighted-average-jadi-0-100 yang benar itu Σskor / Σbobot × 100,
+                // BUKAN Σ(skor×bobot) -- itu double-counting bobot-nya.
                 // TIPE_2 sekarang pilihan ganda multiple choice, bukan esai
                 // Hanya TIPE_3 yang esai (AI grading)
                 if (r.questions.tipe_soal === 'TIPE_3') {
                     if (r.skor !== null) {
-                        const skor = parseFloat(r.skor || 0); // 0-100
+                        const skor = parseFloat(r.skor || 0); // skala poin, 0..bobot
                         gradedBobotEsai += bobot;
-                        totalNilaiEsaiBerbobot += (skor * bobot);
+                        totalNilaiEsaiBerbobot += skor;
                     }
                 } else if (r.questions.tipe_soal === 'TIPE_4') {
                     if (r.skor !== null) {
-                        const skor = parseFloat(r.skor || 0); // 0-100
+                        const skor = parseFloat(r.skor || 0); // skala poin, 0..bobot
                         gradedBobotFile += bobot;
-                        totalNilaiFileBerbobot += (skor * bobot);
+                        totalNilaiFileBerbobot += skor;
                     }
                 }
             });
 
-            const skor_esai_100 = gradedBobotEsai > 0 ? Math.round(totalNilaiEsaiBerbobot / gradedBobotEsai) : 0;
-            const skor_file_100 = gradedBobotFile > 0 ? Math.round(totalNilaiFileBerbobot / gradedBobotFile) : 0;
+            const skor_esai_100 = gradedBobotEsai > 0 ? Math.round((totalNilaiEsaiBerbobot / gradedBobotEsai) * 100) : 0;
+            const skor_file_100 = gradedBobotFile > 0 ? Math.round((totalNilaiFileBerbobot / gradedBobotFile) * 100) : 0;
 
             await prisma.exam_attempts.updateMany({
                 where: { user_id: response.user_id, exam_id: response.exam_id },
@@ -343,6 +360,11 @@ exports.recalculateExamScores = async (req, res) => {
             let gradedBobotEsai = 0, totalNilaiEsaiBerbobot = 0;
             let gradedBobotFile = 0, totalNilaiFileBerbobot = 0;
 
+            // FIX 2026-08-22: r.skor SELALU skala POIN (0..bobot soal itu sendiri)
+            // buat semua tipe soal -- Pilgan (0 atau bobot_nilai dari auto-grading),
+            // Esai (dari AI, lihat aiService.js), Upload (dari submitScore manual,
+            // fix di atas). Weighted-average-jadi-0-100 yang benar itu
+            // Σskor / Σbobot × 100, BUKAN Σ(skor×bobot) -- itu double-counting bobot.
             allResponses.forEach(r => {
                 const bobot = parseFloat(r.questions.bobot_nilai || 10);
                 const skor = r.skor !== null ? parseFloat(r.skor || 0) : null;
@@ -350,24 +372,24 @@ exports.recalculateExamScores = async (req, res) => {
                 if (r.questions.tipe_soal === 'TIPE_1' || r.questions.tipe_soal === 'TIPE_2') {
                     if (skor !== null) {
                         gradedBobotPilgan += bobot;
-                        totalNilaiPilganBerbobot += (skor * bobot);
+                        totalNilaiPilganBerbobot += skor;
                     }
                 } else if (r.questions.tipe_soal === 'TIPE_3') {
                     if (skor !== null) {
                         gradedBobotEsai += bobot;
-                        totalNilaiEsaiBerbobot += (skor * bobot);
+                        totalNilaiEsaiBerbobot += skor;
                     }
                 } else if (r.questions.tipe_soal === 'TIPE_4') {
                     if (skor !== null) {
                         gradedBobotFile += bobot;
-                        totalNilaiFileBerbobot += (skor * bobot);
+                        totalNilaiFileBerbobot += skor;
                     }
                 }
             });
 
-            const skor_pilgan_100 = gradedBobotPilgan > 0 ? Math.round(totalNilaiPilganBerbobot / gradedBobotPilgan) : 0;
-            const skor_esai_100 = gradedBobotEsai > 0 ? Math.round(totalNilaiEsaiBerbobot / gradedBobotEsai) : 0;
-            const skor_file_100 = gradedBobotFile > 0 ? Math.round(totalNilaiFileBerbobot / gradedBobotFile) : 0;
+            const skor_pilgan_100 = gradedBobotPilgan > 0 ? Math.round((totalNilaiPilganBerbobot / gradedBobotPilgan) * 100) : 0;
+            const skor_esai_100 = gradedBobotEsai > 0 ? Math.round((totalNilaiEsaiBerbobot / gradedBobotEsai) * 100) : 0;
+            const skor_file_100 = gradedBobotFile > 0 ? Math.round((totalNilaiFileBerbobot / gradedBobotFile) * 100) : 0;
 
             await prisma.exam_attempts.update({
                 where: { id: attempt.id },
