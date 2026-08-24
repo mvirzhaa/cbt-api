@@ -238,18 +238,22 @@ exports.resetAttempt = async (req, res) => {
 
         // siakad_sync_status cuma nyatet "CBT PERNAH ngirim ke SIAKAD" -- gak otomatis
         // ikut update kalau nilainya belakangan dihapus/diubah manual langsung di SIAKAD.
-        // Makanya guard ini bisa ketinggalan info. Dosen biasa tetap diblok mentah-mentah,
-        // tapi super_admin yang udah pastiin sendiri SIAKAD-nya beres boleh maksa lewat
-        // dengan mengirim `force: true`.
-        const forceReset = req.body?.force === true && req.user.role === 'super_admin';
-        if (attempt.siakad_sync_status === 'TERKIRIM' && !forceReset) {
-            return res.status(409).json({
-                message: `Nilai ${attempt.users.nama} (${attempt.users.nim || '-'}) untuk ujian ini sudah terkirim ke SIAKAD. Batalkan/perbaiki dulu nilainya di SIAKAD sebelum mereset attempt CBT ini, supaya kedua sistem tidak selisih data.`,
-                canForce: req.user.role === 'super_admin'
-            });
-        }
-        if (forceReset) {
-            console.warn(`⚠️ FORCE RESET oleh super_admin (id=${req.user.id}) untuk attempt ${attemptId} (${attempt.users.nama}, sudah TERKIRIM ke SIAKAD) -- diasumsikan SIAKAD sudah dibereskan manual.`);
+        // Makanya guard ini bisa ketinggalan info. Dosen (pemilik ujian ini) dan super_admin
+        // sama-sama boleh maksa lewat `force: true`, TAPI wajib isi alasan (`reason`) supaya
+        // tetap ada jejak siapa-kenapa, karena gak ada approval tambahan di alur ini.
+        const wantForce = req.body?.force === true;
+        const reason = typeof req.body?.reason === 'string' ? req.body.reason.trim() : '';
+        if (attempt.siakad_sync_status === 'TERKIRIM') {
+            if (!wantForce) {
+                return res.status(409).json({
+                    message: `Nilai ${attempt.users.nama} (${attempt.users.nim || '-'}) untuk ujian ini sudah terkirim ke SIAKAD. Batalkan/perbaiki dulu nilainya di SIAKAD sebelum mereset attempt CBT ini, supaya kedua sistem tidak selisih data.`,
+                    canForce: true
+                });
+            }
+            if (!reason) {
+                return res.status(400).json({ message: "Wajib isi alasan kenapa mereset attempt yang sudah terkirim ke SIAKAD.", needsReason: true });
+            }
+            console.warn(`⚠️ FORCE RESET oleh ${req.user.role} (id=${req.user.id}) untuk attempt ${attemptId} (${attempt.users.nama}, sudah TERKIRIM ke SIAKAD). Alasan: "${reason}"`);
         }
 
         await prisma.$transaction([
