@@ -236,10 +236,20 @@ exports.resetAttempt = async (req, res) => {
             return res.status(403).json({ message: "Anda tidak berhak mereset attempt ini." });
         }
 
-        if (attempt.siakad_sync_status === 'TERKIRIM') {
+        // siakad_sync_status cuma nyatet "CBT PERNAH ngirim ke SIAKAD" -- gak otomatis
+        // ikut update kalau nilainya belakangan dihapus/diubah manual langsung di SIAKAD.
+        // Makanya guard ini bisa ketinggalan info. Dosen biasa tetap diblok mentah-mentah,
+        // tapi super_admin yang udah pastiin sendiri SIAKAD-nya beres boleh maksa lewat
+        // dengan mengirim `force: true`.
+        const forceReset = req.body?.force === true && req.user.role === 'super_admin';
+        if (attempt.siakad_sync_status === 'TERKIRIM' && !forceReset) {
             return res.status(409).json({
-                message: `Nilai ${attempt.users.nama} (${attempt.users.nim || '-'}) untuk ujian ini sudah terkirim ke SIAKAD. Batalkan/perbaiki dulu nilainya di SIAKAD sebelum mereset attempt CBT ini, supaya kedua sistem tidak selisih data.`
+                message: `Nilai ${attempt.users.nama} (${attempt.users.nim || '-'}) untuk ujian ini sudah terkirim ke SIAKAD. Batalkan/perbaiki dulu nilainya di SIAKAD sebelum mereset attempt CBT ini, supaya kedua sistem tidak selisih data.`,
+                canForce: req.user.role === 'super_admin'
             });
+        }
+        if (forceReset) {
+            console.warn(`⚠️ FORCE RESET oleh super_admin (id=${req.user.id}) untuk attempt ${attemptId} (${attempt.users.nama}, sudah TERKIRIM ke SIAKAD) -- diasumsikan SIAKAD sudah dibereskan manual.`);
         }
 
         await prisma.$transaction([
