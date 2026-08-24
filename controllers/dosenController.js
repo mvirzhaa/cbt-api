@@ -210,3 +210,52 @@ exports.verifyExam = async (req, res) => {
         res.status(500).json({ message: "Gagal memverifikasi nilai." });
     }
 };
+
+// ============================================================
+// POST /api/dosen/reset-attempt/:attempt_id
+// Hapus attempt + jawaban mahasiswa supaya dia bisa mengerjakan
+// ulang ujian ini dari awal (mis. ujian susulan/perbaikan).
+//
+// 🔒 Ditolak kalau attempt sudah TERKIRIM ke SIAKAD -- reset di sisi
+// CBT saja akan membuat nilai basi tetap nangkring di SIAKAD padahal
+// CBT-nya sudah bersih, dua sistem jadi gak sinkron. Kalau nilainya
+// sudah kepublish ke SIAKAD, harus dibereskan dulu di sana (mis. lewat
+// Rencana Evaluasi/pembatalan nilai) sebelum attempt CBT-nya direset.
+// ============================================================
+exports.resetAttempt = async (req, res) => {
+    try {
+        const attemptId = toPositiveInt(req.params.attempt_id);
+        if (!attemptId) return res.status(400).json({ message: "ID attempt tidak valid." });
+
+        const attempt = await prisma.exam_attempts.findUnique({
+            where: { id: attemptId },
+            include: { exams: true, users: { select: { nama: true, nim: true } } }
+        });
+        if (!attempt) return res.status(404).json({ message: "Data attempt tidak ditemukan." });
+        if (attempt.exams.kode_dosen !== req.user.id.toString() && req.user.role !== 'super_admin') {
+            return res.status(403).json({ message: "Anda tidak berhak mereset attempt ini." });
+        }
+
+        if (attempt.siakad_sync_status === 'TERKIRIM') {
+            return res.status(409).json({
+                message: `Nilai ${attempt.users.nama} (${attempt.users.nim || '-'}) untuk ujian ini sudah terkirim ke SIAKAD. Batalkan/perbaiki dulu nilainya di SIAKAD sebelum mereset attempt CBT ini, supaya kedua sistem tidak selisih data.`
+            });
+        }
+
+        await prisma.$transaction([
+            prisma.student_responses.deleteMany({
+                where: { user_id: attempt.user_id, exam_id: attempt.exam_id }
+            }),
+            prisma.exam_attempts.delete({
+                where: { id: attemptId }
+            })
+        ]);
+
+        res.status(200).json({
+            message: `Attempt ${attempt.users.nama} (${attempt.users.nim || '-'}) berhasil direset. Mahasiswa bisa mengerjakan ujian ini lagi dari awal.`
+        });
+    } catch (error) {
+        console.error("❌ ERROR RESET ATTEMPT:", error);
+        res.status(500).json({ message: "Gagal mereset attempt ujian." });
+    }
+};

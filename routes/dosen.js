@@ -12,6 +12,9 @@ router.get('/attempts/:exam_id', verifyToken, isDosenOrSuperAdmin, dosenControll
 // POST /api/dosen/verify-exam/:attempt_id — Verifikasi & publish nilai mahasiswa
 router.post('/verify-exam/:attempt_id', verifyToken, isDosenOrSuperAdmin, dosenController.verifyExam);
 
+// POST /api/dosen/reset-attempt/:attempt_id — Hapus attempt, izinkan mahasiswa ujian ulang
+router.post('/reset-attempt/:attempt_id', verifyToken, isDosenOrSuperAdmin, dosenController.resetAttempt);
+
 // 📜 Syarat & Ketentuan Ujian (Dosen — baca & kelola)
 router.get('/exam-terms/:examId', verifyToken, isDosenOrSuperAdmin, termsController.getTermsForDosen);
 router.post('/exam-terms/:examId', verifyToken, isDosenOrSuperAdmin, termsController.saveTermsForDosen);
