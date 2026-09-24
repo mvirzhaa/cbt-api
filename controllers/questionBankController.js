@@ -209,12 +209,15 @@ exports.importFromBank = async (req, res) => {
 // ==========================================
 exports.generateAI = async (req, res) => {
     try {
-        const { kode_mk, cpmk_id, sub_cpmk_id, tipe_soal, tingkat_kesulitan, jenis_evaluasi } = req.body;
+        const { kode_mk, cpmk_id, sub_cpmk_id, tipe_soal, tingkat_kesulitan, jenis_evaluasi, instruksi_tambahan } = req.body;
         const jumlah = toPositiveInt(req.body.jumlah);
 
         if (!isNonEmptyString(kode_mk)) return res.status(400).json({ message: "kode_mk wajib diisi." });
         if (!ALLOWED_QUESTION_TYPES.has(tipe_soal)) return res.status(400).json({ message: "tipe_soal tidak valid." });
         if (!jumlah || jumlah < 1 || jumlah > 10) return res.status(400).json({ message: "jumlah harus antara 1-10." });
+        if (isNonEmptyString(instruksi_tambahan) && instruksi_tambahan.length > 500) {
+            return res.status(400).json({ message: "Instruksi tambahan maksimal 500 karakter." });
+        }
 
         const mk = await prisma.mata_kuliah.findUnique({ where: { kode_mk } });
         if (!mk) return res.status(404).json({ message: "Mata kuliah tidak ditemukan." });
@@ -222,6 +225,7 @@ exports.generateAI = async (req, res) => {
         const subCpmkId = toPositiveInt(sub_cpmk_id);
         const cpmkId = toPositiveInt(cpmk_id);
         const jenisEvaluasi = isNonEmptyString(jenis_evaluasi) ? jenis_evaluasi : undefined;
+        const instruksiTambahan = isNonEmptyString(instruksi_tambahan) ? instruksi_tambahan.trim() : undefined;
 
         // batch = daftar { subCpmk, cpmk, jumlah } yang masing2 jadi 1 panggilan
         // AI terpisah. Kalau dosen pilih Sub-CPMK/CPMK spesifik: 1 batch aja
@@ -269,7 +273,8 @@ exports.generateAI = async (req, res) => {
                 tipeSoal: tipe_soal,
                 jumlah: jumlahUnit,
                 tingkatKesulitan: tingkat_kesulitan,
-                jenisEvaluasi
+                jenisEvaluasi,
+                instruksiTambahan
             });
             return { subCpmk, cpmk, generated: generated || [] };
         }));

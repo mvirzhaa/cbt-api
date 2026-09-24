@@ -29,7 +29,7 @@ const TIPE_SCHEMA_HINT = {
     TIPE_4: `[{ "isi_soal": "instruksi tugas upload yang jelas" }]`
 };
 
-const buildPrompt = ({ namaMk, cpmkDeskripsi, subCpmkDeskripsi, tipeSoal, jumlah, tingkatKesulitan, jenisEvaluasi }) => {
+const buildPrompt = ({ namaMk, cpmkDeskripsi, subCpmkDeskripsi, tipeSoal, jumlah, tingkatKesulitan, jenisEvaluasi, instruksiTambahan }) => {
     const skema = TIPE_SCHEMA_HINT[tipeSoal];
     const konteksCpmk = subCpmkDeskripsi
         ? `Sub-CPMK acuan: "${subCpmkDeskripsi}"${cpmkDeskripsi ? ` (bagian dari CPMK: "${cpmkDeskripsi}")` : ''}`
@@ -37,12 +37,16 @@ const buildPrompt = ({ namaMk, cpmkDeskripsi, subCpmkDeskripsi, tipeSoal, jumlah
     const konteksEvaluasi = jenisEvaluasi
         ? `Soal ini akan dipakai untuk komponen evaluasi "${jenisEvaluasi}" -- sesuaikan cakupan materi, gaya, dan tingkat kedalaman soal dengan konteks itu (mis. Kuis/Tugas lebih fokus & ringkas per topik, UTS/UAS lebih komprehensif, Proyek Akhir lebih aplikatif/studi kasus).`
         : '';
+    const instruksiTambahanText = instruksiTambahan
+        ? `Instruksi tambahan dari dosen (WAJIB diikuti selama tidak bertentangan dengan aturan output di bawah): "${instruksiTambahan}"`
+        : '';
 
     return `
     Kamu adalah Dosen ${namaMk || 'Teknik Informatika'} yang menyusun soal ujian.
     ${konteksCpmk}
     ${konteksEvaluasi}
     Tingkat kesulitan: ${tingkatKesulitan || 'sedang'}.
+    ${instruksiTambahanText}
 
     TUGAS: Buat tepat ${jumlah} butir soal tipe ${tipeSoal} yang mengukur pemahaman mahasiswa terhadap acuan CPMK/Sub-CPMK di atas.
 
@@ -63,8 +67,8 @@ const stripCodeFence = (text) => {
  * Generate draft questions via Gemini.
  * @returns {Array|null} parsed array of generated questions, or null if all models/parsing fail
  */
-exports.generateQuestions = async ({ namaMk, cpmkDeskripsi, subCpmkDeskripsi, tipeSoal, jumlah, tingkatKesulitan, jenisEvaluasi }) => {
-    const prompt = buildPrompt({ namaMk, cpmkDeskripsi, subCpmkDeskripsi, tipeSoal, jumlah, tingkatKesulitan, jenisEvaluasi });
+exports.generateQuestions = async ({ namaMk, cpmkDeskripsi, subCpmkDeskripsi, tipeSoal, jumlah, tingkatKesulitan, jenisEvaluasi, instruksiTambahan }) => {
+    const prompt = buildPrompt({ namaMk, cpmkDeskripsi, subCpmkDeskripsi, tipeSoal, jumlah, tingkatKesulitan, jenisEvaluasi, instruksiTambahan });
     const maxRetries = MODEL_PRIORITY.length;
 
     for (let attempt = 0; attempt < maxRetries; attempt++) {
