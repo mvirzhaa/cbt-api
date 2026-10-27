@@ -41,6 +41,7 @@ SIAKAD_API_BASE_URL="https://api-siak.uika-bogor.ac.id"  # Optional: unset = sia
 SIAKAD_ADMIN_USERNAME="adminakademik"               # Required (when SIAKAD_API_BASE_URL is set): CBT's service-account login to SIAKAD
 SIAKAD_ADMIN_PASSWORD="password123"                 # Required (when SIAKAD_API_BASE_URL is set): see above
 CBT_FRONTEND_URL="https://u-talent.uika-bogor.ac.id" # Required to use SEB lockdown: bare domain (NO /cbt suffix), Start URL baked into generated .seb files
+CBT_API_PUBLIC_PATH_PREFIX="/cbt-api"                # Required to use SEB lockdown IF this API sits behind a path-stripping reverse-proxy location (e.g. nginx `location /cbt-api/ { proxy_pass http://localhost:3003/; }`) -- unset/empty if this API is already at its own domain root
 ```
 
 ## Core Architecture
@@ -306,6 +307,12 @@ app could not replicate without native OS hooks.
   `getRequestUrl()` prefers `X-Forwarded-Proto`/`X-Forwarded-Host` over
   `req.protocol`/`req.get('host')` since this API commonly sits behind a
   reverse proxy that changes what Express sees vs. what SEB actually hashed.
+  It also re-prepends `CBT_API_PUBLIC_PATH_PREFIX` to `req.originalUrl` —
+  a path-stripping proxy location (e.g. nginx `location /cbt-api/ {
+  proxy_pass http://localhost:3003/; }`, trailing slash on `proxy_pass` =
+  strip) means Express never sees the `/cbt-api` prefix that's actually
+  part of the public URL SEB hashed, so without this the check fails on
+  *every* request, not just an edge case.
 - Student submission flow itself (token entry, exam UI) is **unchanged** —
   SEB is just the browser rendering the same cbt-frontend pages, so
   `TakeExam.jsx`'s existing proctoring JS runs inside it automatically.

@@ -35,10 +35,21 @@ function buildExamStartUrl(baseUrl, exam) {
 // bikin req.protocol/host yang Express lihat beda dari yang benar-benar
 // diketik browser (SEB) -- makanya utamakan X-Forwarded-* kalau ada, baru
 // fallback ke req.protocol/req.get('host') kalau proxy-nya gak kirim itu.
+//
+// CBT_API_PUBLIC_PATH_PREFIX: sebagian deployment proxy backend ini di bawah
+// path, bukan di root domain sendiri (contoh nyata: nginx `location /cbt-api/
+// { proxy_pass http://localhost:3003/; }` -- trailing slash di proxy_pass
+// bikin nginx STRIP prefix "/cbt-api" sebelum Express sempat melihatnya).
+// req.originalUrl jadinya cuma "/api/student/verify-token", padahal SEB
+// menghitung hash dari URL publik PENUH "https://domain/cbt-api/api/...".
+// Tanpa prefix ini ditempel balik di sini, verifikasi akan gagal 100% kasus,
+// bukan cuma di edge case -- isi sesuai prefix path proxy di depan ini kalau
+// ada (contoh: "/cbt-api"), kosongkan kalau backend ini sudah di root domain.
 function getRequestUrl(req) {
     const proto = req.get('x-forwarded-proto') || req.protocol;
     const host = req.get('x-forwarded-host') || req.get('host');
-    return `${proto}://${host}${req.originalUrl}`;
+    const prefix = process.env.CBT_API_PUBLIC_PATH_PREFIX || '';
+    return `${proto}://${host}${prefix}${req.originalUrl}`;
 }
 
 /**
