@@ -265,8 +265,17 @@ app could not replicate without native OS hooks.
   subtly wrong.
 - **Setup** (dosen/super_admin, ownership-checked like the SIAKAD target
   endpoints): `PUT /api/seb/exams/:exam_id/settings` with `{ seb_require,
-  quit_password? }` builds the config (via `sebService.buildExamSebConfig`)
-  and stores the **normalized** config object Prisma-side as
+  quit_password? }` builds the config (via `sebService.buildExamSebConfig`).
+  `quit_password` is **required the first time** `seb_require` is turned on
+  — SEB's `allowQuit` is only `true` when a `hashedQuitPassword` exists, so
+  an empty password doesn't mean "quit allowed without a password" (the
+  controller's original behavior, now fixed) but **"cannot quit SEB at
+  all"**, a real lockout risk. A later save may leave `quit_password` blank
+  to keep the existing hash (the plaintext is never sent back to the
+  frontend, only `exams.seb_config.hashedQuitPassword` is persisted) —
+  `setExamSebSettings` carries that forward via
+  `buildExamSebConfig(exam, { quitPassword, hashedQuitPassword })`.
+  Stores the **normalized** config object Prisma-side as
   `exams.seb_config` — always recompute the Config Key from this stored
   object, never from fresh input, or the hash will drift from the `.seb`
   file already handed to students. Surfaced in `RekapNilai.jsx` (frontend)

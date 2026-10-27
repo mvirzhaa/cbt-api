@@ -15,8 +15,12 @@ const findOwnedExam = async (req, examId) => {
 // ============================================================
 // PUT /api/seb/exams/:exam_id/settings
 // Nyalakan/matikan wajib-SEB untuk satu ujian + (re)generate config-nya.
-// Password kosong/dihilangkan = SEB boleh di-quit tanpa password (tidak
-// direkomendasikan, tapi tetap diizinkan -- dosen yang pilih).
+// Password keluar WAJIB diisi saat pertama kali mengaktifkan -- SEB tanpa
+// password keluar berarti TIDAK BISA DIKELUARKAN SAMA SEKALI (allowQuit
+// false), bukan "boleh keluar tanpa password", jadi tidak boleh dibiarkan
+// kosong dua-duanya. Save berikutnya boleh kosongkan field-nya kalau cuma
+// mau pertahankan password yang sudah tersimpan (frontend tidak pernah
+// dikasih balik plaintext-nya, cuma hash-nya yang disimpan).
 // ============================================================
 exports.setExamSebSettings = async (req, res) => {
     try {
@@ -28,10 +32,17 @@ exports.setExamSebSettings = async (req, res) => {
 
         const sebRequire = !!req.body.seb_require;
         const quitPassword = isNonEmptyString(req.body.quit_password) ? req.body.quit_password : null;
+        const existingHashedQuitPassword = exam.seb_config?.hashedQuitPassword || null;
 
         let sebConfig = exam.seb_config;
         if (sebRequire) {
-            const { normalizedConfig } = await sebService.buildExamSebConfig(exam, { quitPassword });
+            if (!quitPassword && !existingHashedQuitPassword) {
+                return res.status(400).json({ message: "Password keluar SEB wajib diisi saat pertama kali mengaktifkan Wajib-SEB." });
+            }
+            const { normalizedConfig } = await sebService.buildExamSebConfig(exam, {
+                quitPassword,
+                hashedQuitPassword: existingHashedQuitPassword
+            });
             sebConfig = normalizedConfig;
         }
 

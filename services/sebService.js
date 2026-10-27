@@ -57,28 +57,37 @@ function getRequestUrl(req) {
  * baru, tidak bisa pindah ke app lain (createNewDesktop -- fitur Windows SEB
  * yang bikin proses ujian jalan di virtual desktop terpisah, ini yang
  * sebenarnya menolak Alt+Tab/Win key, bukan sekadar kiosk mode), dan tidak
- * bisa keluar tanpa quitPassword. File upload (TIPE_4) tetap diizinkan.
+ * bisa keluar tanpa password keluar. File upload (TIPE_4) tetap diizinkan.
+ *
+ * Password keluar WAJIB ada -- kalau tidak ada quitPassword (fresh) maupun
+ * hashedQuitPassword (dibawa dari save sebelumnya), allowQuit jadi false
+ * yang artinya SEB TIDAK BISA DIKELUARKAN SAMA SEKALI, bukan "boleh keluar
+ * tanpa password". Caller (sebController) wajib menolak kombinasi kosong
+ * dua-duanya sebelum sampai ke sini -- lihat setExamSebSettings().
  *
  * Setting kunci khusus (F-keys individual, Esc, URL filter per-domain)
  * SENGAJA tidak disentuh di sini -- biarkan default SEB, karena tanpa bisa
  * tes langsung ke client SEB asli, salah tebak semantik satu toggle saja
  * bisa mengunci mahasiswa dari dalam ujiannya sendiri.
  */
-async function buildExamSebConfig(exam, { quitPassword } = {}) {
+async function buildExamSebConfig(exam, { quitPassword, hashedQuitPassword } = {}) {
     const baseUrl = process.env.CBT_FRONTEND_EXAM_URL || process.env.CBT_FRONTEND_URL;
     if (!baseUrl) {
         throw new Error("CBT_FRONTEND_URL (atau CBT_FRONTEND_EXAM_URL) belum di-set di .env -- dibutuhkan sebagai Start URL file .seb.");
     }
     const startUrl = buildExamStartUrl(baseUrl, exam);
 
+    // Password baru (plaintext) selalu menang atas hash lama yang dibawa dari save sebelumnya.
+    const finalHashedQuitPassword = quitPassword ? hashSebPassword(quitPassword) : (hashedQuitPassword || null);
+
     const rawConfig = {
         startURL: startUrl,
         browserViewMode: 1, // fullscreen (kiosk)
 
-        allowQuit: !!quitPassword,
+        allowQuit: !!finalHashedQuitPassword,
         ignoreQuitPassword: false,
         quitURLConfirm: true,
-        ...(quitPassword ? { hashedQuitPassword: hashSebPassword(quitPassword) } : {}),
+        ...(finalHashedQuitPassword ? { hashedQuitPassword: finalHashedQuitPassword } : {}),
 
         // Tidak bisa buka tab/window lain
         browserWindowAllowAddressBar: false,
