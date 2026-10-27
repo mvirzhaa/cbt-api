@@ -39,6 +39,14 @@ model exams {
   // soal lokal CBT (2 hal yang beda skalanya, sebelumnya ketuker).
   siakad_bobot_cpmk Json?
 
+  // Lockdown via Safe Exam Browser resmi (safeexambrowser.org) -- lihat
+  // CLAUDE.md bagian "Safe Exam Browser (SEB) Lockdown". seb_config adalah
+  // config object HASIL NORMALISASI dari generateSEBConfig() (bukan input
+  // mentah) -- wajib dipakai apa adanya saat verifikasi Config Key supaya
+  // hash-nya konsisten dengan file .seb yang sudah diunduh dosen/mahasiswa.
+  seb_require Boolean @default(false)
+  seb_config  Json?
+
   @@index([kode_mk], map: "kode_mk")
 }
 

@@ -40,6 +40,7 @@ TIAS_SHARED_SECRET="integration_key"  # Optional: for TIAS integration
 SIAKAD_API_BASE_URL="https://api-siak.uika-bogor.ac.id"  # Optional: unset = siakadClient runs in stub/simulation mode. Bare host, no /api suffix.
 SIAKAD_ADMIN_USERNAME="adminakademik"               # Required (when SIAKAD_API_BASE_URL is set): CBT's service-account login to SIAKAD
 SIAKAD_ADMIN_PASSWORD="password123"                 # Required (when SIAKAD_API_BASE_URL is set): see above
+CBT_FRONTEND_URL="https://u-talent.uika-bogor.ac.id" # Required to use SEB lockdown: bare domain (NO /cbt suffix), Start URL baked into generated .seb files
 ```
 
 ## Core Architecture
@@ -247,6 +248,99 @@ JS functions.
   - `KETIKAN_TIDAK_WAJAR`: an `onInput` listener on the exam wrapper inspects `InputEvent.inputType` for TIPE_3 essay textareas; `insertFromPaste`/`insertFromDrop`/`insertFromYank`/`insertReplacementText` catch paste-like insertions that bypass the normal `paste` event (already covered by `MENYALIN_TEMPEL`) — e.g. drag-dropped text. Deliberately does **not** record keystroke content, only the input-type metadata.
   - `MOUSE_TIDAK_AKTIF`: tracks the timestamp of the last `mousemove` and last `keydown` (window-level listeners), checked every 30s; fires only when **both** have been idle past `MOUSE_INACTIVE_THRESHOLD` (3 min) — requiring both avoids false positives from students who type long essays without touching the mouse.
   - New enum values live in `prisma/migration_proctoring_advanced_signals.sql` (same not-yet-applied convention as the other migration files here).
+
+### Safe Exam Browser (SEB) Lockdown
+Unlike the detect-only signals above, this is an actual **hard block**, opt-in
+per exam via `exams.seb_require`. It integrates with the real, official Safe
+Exam Browser (safeexambrowser.org) — a third-party kiosk browser students
+install once — rather than a custom-built lockdown app, because SEB already
+solves OS-level lockdown (its own Windows virtual-desktop isolation via
+`createNewDesktop`, which is what actually denies Alt+Tab/Win-key app
+switching, not just a browser "kiosk mode") in a way a from-scratch Electron
+app could not replicate without native OS hooks.
+- **Library**: `@certible/seb-node` (`services/sebService.js`) builds `.seb`
+  config files and implements the Config Key algorithm — don't hand-roll the
+  SEB-JSON canonicalization/hashing, it's security-critical and easy to get
+  subtly wrong.
+- **Setup** (dosen/super_admin, ownership-checked like the SIAKAD target
+  endpoints): `PUT /api/seb/exams/:exam_id/settings` with `{ seb_require,
+  quit_password? }` builds the config (via `sebService.buildExamSebConfig`)
+  and stores the **normalized** config object Prisma-side as
+  `exams.seb_config` — always recompute the Config Key from this stored
+  object, never from fresh input, or the hash will drift from the `.seb`
+  file already handed to students. Surfaced in `RekapNilai.jsx` (frontend)
+  as a card next to the NL-SIAK target settings (toggle + quit password +
+  "Unduh .seb" button, via `services/seb.service.js`).
+  `GET /api/seb/exams/:exam_id/config` (dosen) and `POST
+  /api/student/seb-config` (student, by token — returns only the `.seb`
+  file, never exam/question content, so it's safe to call from a plain
+  browser that doesn't have SEB yet) both re-serialize that stored config
+  into a downloadable `.seb` file via `sebService.generateSebFileBuffer()`.
+  The student route exists so a student isn't stuck waiting on the dosen to
+  separately distribute the file through the LMS/WhatsApp — the token they
+  already have is enough to self-serve it.
+- **Start URL points straight at the token screen, token prefilled**:
+  `sebService.buildExamStartUrl()` sets the Start URL to
+  `${CBT_FRONTEND_URL}/cbt/take-exam?token=<token_ujian>` (the `/cbt` prefix
+  matches cbt-frontend's router `basename` — see the comment in
+  `buildExamStartUrl()`), not the frontend
+  root. `TakeExam.jsx` reads `?token=` on mount and prefills (never
+  auto-submits) the token field. This is deliberately not a secrecy
+  regression — the token is already handed to the whole class via
+  whatever channel the dosen uses, so baking it into the `.seb` file (also
+  distributed to the whole class) exposes nothing new; the real security
+  boundary is the Config Key check below, not token secrecy. End result:
+  open the `.seb` file → allow camera → accept terms → exam starts, no
+  manual typing. If the dosen regenerates the token after distributing the
+  file, the prefill goes stale but is just a form value — the student can
+  still overwrite it by hand.
+- **Verification**: `sebService.verifySebRequest(req, exam)` is called inside
+  `studentController.verifyToken` (token-entry gate) and `submitExam`
+  (defense in depth). It checks the `X-SafeExamBrowser-ConfigKeyHash` header
+  that real SEB attaches to **every** HTTP request made from inside it
+  (regardless of origin) — SHA256(request URL + Config Key), hex. This is
+  cryptographic proof the request came from a genuine SEB instance holding
+  this exact config, not just a spoofable `User-Agent` string (which is all
+  the pre-existing `TIDAK_MENGGUNAKAN_SEB` detect-only proctoring signal
+  checks — that one stays as-is for exams that don't set `seb_require`).
+  `getRequestUrl()` prefers `X-Forwarded-Proto`/`X-Forwarded-Host` over
+  `req.protocol`/`req.get('host')` since this API commonly sits behind a
+  reverse proxy that changes what Express sees vs. what SEB actually hashed.
+- Student submission flow itself (token entry, exam UI) is **unchanged** —
+  SEB is just the browser rendering the same cbt-frontend pages, so
+  `TakeExam.jsx`'s existing proctoring JS runs inside it automatically.
+  **One SEB setting is NOT left at default though**: `browserMediaCaptureCamera`
+  defaults to `false` in real SEB, which silently suppresses the camera
+  permission prompt entirely (not a denial the user can override — the
+  dialog never appears), so `buildExamSebConfig()` force-sets it `true` (and
+  `browserMediaCaptureMicrophone: false`, since the AI proctoring only ever
+  requests `{ video: true, audio: false }`). Without this override, face
+  detection would silently never activate inside SEB while the exam itself
+  still opens fine — an easy-to-miss gap since nothing errors.
+- **Deliberately not configured**: per-domain `URLFilterRules` (numeric
+  `action` enum isn't documented with enough confidence to set without
+  risking locking students out of their own exam) and most individual key
+  toggles (`enableEsc`, F-keys, etc. — SEB's checkbox semantics for these
+  couldn't be verified against a real client in this environment). The
+  config intentionally only sets settings that were cross-checked against
+  the library's actual schema and official SEB documentation: fullscreen,
+  quit password, no address bar/back-forward/new-window/popup, no app
+  switching, no VM, no dev console, no Start Menu, camera capture (see
+  above), and uploads left enabled (TIPE_4 depends on it). Revisit before
+  hardening further.
+- Schema: `prisma/migration_seb_integration.sql` (`exams.seb_require` /
+  `exams.seb_config`) — not yet applied to the live DB as of this writing,
+  run manually once MySQL is reachable, per this project's migration
+  convention (same as the SIAKAD/proctoring migration files above).
+- Dosen-facing UI (toggle + download button, `RekapNilai.jsx`) and the
+  student-facing blocking screen (`TakeExam.jsx`, shown when `verifyToken`
+  returns `seb_required: true`, with its own "Unduh .seb" button) are both
+  done — see the two bullets above. `PanduanUjian.jsx` has a one-time
+  "how to install SEB" card pointing students at safeexambrowser.org.
+- Still out of scope: live testing against a real SEB client (everything
+  here is verified against the `@certible/seb-node` library's own Config
+  Key math, not against actual SEB desktop behavior — see the note at the
+  end of this section).
 
 ## Known Limitations
 

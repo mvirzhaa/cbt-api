@@ -10,6 +10,7 @@ const handleUpload = require('../middlewares/uploadErrorHandler');
 router.get('/exams', verifyToken, studentController.getExams);
 router.get('/exams/:id/token', verifyToken, studentController.getExamToken);
 router.post('/verify-token', verifyToken, studentController.verifyToken);
+router.post('/seb-config', verifyToken, studentController.downloadSebConfig);
 router.get('/history', verifyToken, studentController.getHistory);
 
 // 📜 Syarat & Ketentuan Ujian (Mahasiswa — read only)

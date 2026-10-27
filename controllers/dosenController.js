@@ -81,7 +81,8 @@ exports.getAttemptsByExam = async (req, res) => {
                 total_bobot_soal: totalBobotSoal,
                 siakad_kelas_kuliah_id: exam.siakad_kelas_kuliah_id,
                 siakad_periode_akademik_id: exam.siakad_periode_akademik_id,
-                siakad_rencana_evaluasi_id: exam.siakad_rencana_evaluasi_id
+                siakad_rencana_evaluasi_id: exam.siakad_rencana_evaluasi_id,
+                seb_require: exam.seb_require
             },
             data
         });

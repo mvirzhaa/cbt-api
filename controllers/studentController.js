@@ -2,7 +2,42 @@ const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 const aiService = require('../services/aiService'); // ✅ Import Otak AI Kapten
 const proctoringHeartbeatService = require('../services/proctoringHeartbeatService');
+const sebService = require('../services/sebService');
 const { isNonEmptyString } = require('../utils/helpers');
+
+const SEB_BLOCK_MESSAGE = "Ujian ini wajib diakses lewat Safe Exam Browser (SEB) resmi. Unduh file konfigurasi .seb untuk ujian ini, lalu buka lewat SEB.";
+
+// ============================================================
+// POST /api/student/seb-config
+// Download mandiri file .seb berdasarkan token -- supaya mahasiswa tidak
+// selalu gantung ke dosen yang kadang lupa sebar file terpisah di LMS/grup
+// kelas. HANYA mengembalikan file .seb (tanpa data soal/exam apa pun), jadi
+// aman dipanggil dari browser biasa (justru itu caranya: mahasiswa belum
+// punya SEB saat ini, makanya minta file konfigurasinya dulu).
+// ============================================================
+exports.downloadSebConfig = async (req, res) => {
+    try {
+        const { token } = req.body;
+        if (!isNonEmptyString(token)) {
+            return res.status(400).json({ message: "Token ujian tidak valid." });
+        }
+
+        const exam = await prisma.exams.findUnique({ where: { token_ujian: token.toUpperCase() } });
+        if (!exam) return res.status(404).json({ message: "Token Ujian tidak ditemukan di database." });
+        if (!exam.seb_require || !exam.seb_config) {
+            return res.status(409).json({ message: "Ujian ini tidak mewajibkan Safe Exam Browser." });
+        }
+
+        const fileBuffer = await sebService.generateSebFileBuffer(exam);
+        const safeName = exam.nama_ujian.replace(/[^a-z0-9]+/gi, '_').slice(0, 60);
+        res.setHeader('Content-Type', 'application/octet-stream');
+        res.setHeader('Content-Disposition', `attachment; filename="${safeName}.seb"`);
+        res.send(fileBuffer);
+    } catch (error) {
+        console.error('[studentController.downloadSebConfig]', error);
+        res.status(500).json({ message: "Gagal membuat file .seb." });
+    }
+};
 
 exports.verifyToken = async (req, res) => {
     try {
@@ -32,6 +67,11 @@ exports.verifyToken = async (req, res) => {
         });
 
         if (!exam) return res.status(404).json({ message: "Token Ujian tidak ditemukan di database." });
+
+        const sebCheck = sebService.verifySebRequest(req, exam);
+        if (!sebCheck.ok) {
+            return res.status(403).json({ message: SEB_BLOCK_MESSAGE, seb_required: true });
+        }
 
         const now = new Date();
         const waktuMulaiToleransi = new Date(new Date(exam.waktu_mulai).getTime() - (5 * 60000));
@@ -82,6 +122,13 @@ exports.submitExam = async (req, res) => {
 
         const examIdInt = parseInt(exam_id);
         if (!examIdInt) return res.status(400).json({ message: "exam_id tidak valid." });
+
+        const examForSebCheck = await prisma.exams.findUnique({ where: { id: examIdInt } });
+        if (!examForSebCheck) return res.status(404).json({ message: "Ujian tidak ditemukan." });
+        const sebCheck = sebService.verifySebRequest(req, examForSebCheck);
+        if (!sebCheck.ok) {
+            return res.status(403).json({ message: SEB_BLOCK_MESSAGE, seb_required: true });
+        }
 
         // 🔒 Cegah submit ganda: satu mahasiswa hanya boleh mengumpulkan satu kali per ujian
         const existingAttempt = await prisma.exam_attempts.findUnique({

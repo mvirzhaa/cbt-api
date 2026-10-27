@@ -18,6 +18,7 @@ const materiRoutes = require('./routes/materi');
 const proctoringRoutes = require('./routes/proctoring');
 const dosenRoutes = require('./routes/dosen');
 const siakadRoutes = require('./routes/siakad');
+const sebRoutes = require('./routes/seb');
 const cpmkRoutes = require('./routes/cpmk');
 const questionBankRoutes = require('./routes/questionBank');
 const ssoRoutes = require('./routes/sso');
@@ -67,6 +68,7 @@ app.use('/api/materi', materiRoutes);
 app.use('/api/proctoring', proctoringRoutes);
 app.use('/api/dosen', dosenRoutes);
 app.use('/api/siakad', siakadRoutes);
+app.use('/api/seb', sebRoutes);
 app.use('/api/cpmk', cpmkRoutes);
 app.use('/api/question-bank', questionBankRoutes);
 
